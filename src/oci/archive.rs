@@ -294,21 +294,37 @@ fn descriptor_tags(descriptor: &Descriptor) -> Option<Vec<String>> {
         .map(|tag| vec![tag.clone()])
 }
 
+#[derive(Debug)]
+pub(super) struct MissingPlatform {
+    target: String,
+    platforms: String,
+}
+
+impl std::fmt::Display for MissingPlatform {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "no image available for platform {}; archive platforms: {}. Provide an image archive containing the requested platform",
+            self.target, self.platforms
+        )
+    }
+}
+
+impl std::error::Error for MissingPlatform {}
+
 fn select_manifest(
     mut candidates: Vec<ManifestData>,
     target: &Platform,
     platforms: BTreeSet<String>,
 ) -> Result<ManifestData> {
     let platforms = platforms.into_iter().collect::<Vec<_>>().join(", ");
-    ensure!(
-        !candidates.is_empty(),
-        "no image available for platform {target}; archive platforms: {}. For engine images, fetch the requested platform locally first; for archives, provide an archive containing it",
-        if platforms.is_empty() {
-            "(none)"
-        } else {
-            &platforms
-        }
-    );
+    if candidates.is_empty() {
+        ensure!(!platforms.is_empty(), "archive contains no image platforms");
+        bail!(MissingPlatform {
+            target: target.to_string(),
+            platforms
+        });
+    }
     if candidates.len() > 1 {
         let references = candidates
             .iter()

@@ -1,12 +1,10 @@
 # Peek
 
-Peek inspects container image layers and shows which files were added, modified, or deleted. View the results in the terminal or export them as JSON.
-
-Interactive exploration is not available yet.
+Peek shows file additions, modifications, and deletions between container image layers. Read the results in your terminal or export them as JSON.
 
 ## Install
 
-With Rust and Cargo installed, run from the project directory:
+With Rust and Cargo installed, run from this directory:
 
 ```sh
 cargo install --path . --locked
@@ -14,53 +12,38 @@ cargo install --path . --locked
 
 ## Usage
 
-Docker must be running. Use an image and tag already available locally; these examples use Ubuntu and Redis. Untagged names select `:latest`.
+Use Docker or Podman. Peek pulls missing images and platform variants into the selected engine’s image store. Untagged image names use `:latest`.
 
 ```sh
-docker image ls
 peek analyze ubuntu:latest
-peek analyze redis:latest
-```
-
-For multi-platform images, Peek selects the host platform. The requested variant must already be available locally; Peek does not pull images. Select another locally available platform with `--platform`:
-
-```sh
+peek analyze redis:latest --source podman
 peek analyze ubuntu:latest --platform linux/arm64
 ```
 
-Terminal output groups file changes by layer and formats image commands for readability. Color is enabled automatically where supported; set `NO_COLOR=1` to disable it.
-
-### JSON export
+### JSON output
 
 ```sh
-# Print JSON to stdout
+# Write layer changes to stdout
 peek analyze ubuntu:latest --json
 
-# Save JSON to a new file
+# Save layer changes to a new file
 peek analyze ubuntu:latest --json -o changes.json
 
-# Export the complete filesystem listing after each layer
+# Save the complete filesystem listing after each layer
 peek analyze ubuntu:latest --json --layers full -o files.json
 ```
 
-JSON shows per-layer changes by default. `-o`/`--output` selects a file destination; existing files are not overwritten.
+Existing output files are not overwritten. Set `NO_COLOR=1` to disable terminal colors.
 
-Run `peek --help` or `peek analyze --help` for options. `peek a` aliases `peek analyze`, and `peek v` prints the version.
+Use `peek analyze --help` for options. `peek a` is shorthand for `peek analyze`; `peek v` prints the version.
 
-## Development
+## Contributing
 
-With Rust, Cargo, and Docker available, run from the project directory:
+From this directory:
 
 ```sh
 cargo run -- analyze ubuntu:latest
 cargo fmt --check
 cargo check --locked
 cargo clippy --locked --all-targets -- -D warnings
-```
-
-Build and run an optimized executable:
-
-```sh
-cargo build --release --locked
-./target/release/peek analyze ubuntu:latest
 ```
