@@ -51,7 +51,7 @@ pub struct AnalyzeOptions {
     #[command(flatten)]
     pub image: ImageOptions,
 
-    /// Format analysis as JSON (stdout unless --output is supplied)
+    /// Format layer changes as JSON (stdout unless --output is supplied)
     #[arg(short = 'j', long)]
     pub json: bool,
 
@@ -62,23 +62,11 @@ pub struct AnalyzeOptions {
     /// JSON layer view: incremental changes or cumulative filesystem
     #[arg(long, value_enum, default_value = "diff", requires = "json")]
     pub layers: LayerFormat,
-
-    /// Minimum efficiency ratio, or disabled
-    #[arg(long = "lowestEfficiency", value_name = "VALUE")]
-    pub lowest_efficiency: Option<String>,
-
-    /// Maximum wasted bytes with optional units, or disabled
-    #[arg(long = "highestWastedBytes", value_name = "VALUE")]
-    pub highest_wasted_bytes: Option<String>,
-
-    /// Maximum waste/user-size ratio, or disabled
-    #[arg(long = "highestUserWastedPercent", value_name = "VALUE")]
-    pub highest_user_wasted_percent: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Analyze an image and evaluate supplied rules without opening the TUI
+    /// Show file changes between image layers without opening the TUI
     #[command(visible_alias = "a")]
     Analyze(AnalyzeOptions),
     /// Print the application version

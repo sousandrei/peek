@@ -29,13 +29,6 @@ pub(super) fn inspect(options: &ImageOptions) -> Result<()> {
 }
 
 pub(super) fn analyze(options: &AnalyzeOptions) -> Result<()> {
-    if options.lowest_efficiency.is_some()
-        || options.highest_wasted_bytes.is_some()
-        || options.highest_user_wasted_percent.is_some()
-    {
-        bail!("rule evaluation is not implemented yet; omit the threshold flags");
-    }
-
     let analysis = load(&options.image)?;
 
     if options.json {
