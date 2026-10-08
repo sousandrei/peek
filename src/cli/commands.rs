@@ -1,6 +1,9 @@
+use std::fs::OpenOptions;
+use std::io::BufWriter;
+
 use anyhow::{Context, Result, bail};
 
-use super::{AnalyzeOptions, ImageOptions, LayerFormat, Shell, Source};
+use super::{AnalyzeOptions, ImageOptions, LayerFormat, Shell, Source, output};
 use crate::{export, oci, tui};
 
 fn load(options: &ImageOptions) -> Result<oci::Analysis> {
@@ -35,29 +38,38 @@ pub(super) fn analyze(options: &AnalyzeOptions) -> Result<()> {
 
     let analysis = load(&options.image)?;
 
-    if let Some(destination) = &options.json {
-        let view = match options.layers {
-            LayerFormat::Diff => export::LayerView::Diff,
-            LayerFormat::Full => export::LayerView::Full,
-        };
-        export::json(&analysis, view, destination)
+    if options.json {
+        json_output(&analysis, options)
     } else {
-        println!(
-            "{}: {} layers, {} visible paths",
-            analysis.image.reference,
-            analysis.layers.len(),
-            analysis.filesystem.len()
-        );
+        let mut stdout =
+            anstream::AutoStream::new(std::io::stdout(), output::color_choice()).lock();
+        output::analysis(&analysis, &mut stdout).context("cannot write analysis output")
+    }
+}
 
-        for layer in &analysis.layers {
-            println!(
-                "Layer {}: {} changes — {}",
-                layer.layer.index,
-                layer.changes.len(),
-                layer.layer.command
-            );
-        }
-        Ok(())
+fn json_output(analysis: &oci::Analysis, options: &AnalyzeOptions) -> Result<()> {
+    let view = match options.layers {
+        LayerFormat::Diff => export::LayerView::Diff,
+        LayerFormat::Full => export::LayerView::Full,
+    };
+
+    if let Some(destination) = &options.output {
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(destination)
+            .with_context(|| {
+                format!(
+                    "cannot create JSON output {} (existing files are not overwritten)",
+                    destination.display()
+                )
+            })?;
+
+        export::json(analysis, view, &mut BufWriter::new(file))
+            .with_context(|| format!("cannot write JSON output {}", destination.display()))
+    } else {
+        export::json(analysis, view, &mut std::io::stdout().lock())
+            .context("cannot write JSON to stdout")
     }
 }
 

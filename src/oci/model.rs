@@ -56,12 +56,17 @@ pub struct FileEntry {
     pub uid: u64,
     pub gid: u64,
     pub mtime: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub link_target: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub content_digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub device_major: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub device_minor: Option<u32>,
     pub xattrs: BTreeMap<String, String>,
     pub layer_index: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub content_layer_index: Option<usize>,
 }
 

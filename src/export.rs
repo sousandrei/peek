@@ -1,10 +1,8 @@
 //! Versioned JSON views of the OCI analysis model.
 
-use std::fs::OpenOptions;
-use std::io::BufWriter;
-use std::path::Path;
+use std::io::Write;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::ser::{SerializeSeq, SerializeStruct};
 use serde::{Serialize, Serializer};
 
@@ -16,22 +14,10 @@ pub enum LayerView {
     Full,
 }
 
-pub fn json(analysis: &Analysis, view: LayerView, destination: &Path) -> Result<()> {
-    let file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(destination)
-        .with_context(|| {
-            format!(
-                "cannot create JSON output {} (existing files are not overwritten)",
-                destination.display()
-            )
-        })?;
-
-    let mut writer = BufWriter::new(file);
-    serde_json::to_writer_pretty(&mut writer, &Document { analysis, view })
-        .with_context(|| format!("cannot write JSON output {}", destination.display()))?;
-    std::io::Write::flush(&mut writer)?;
+pub fn json(analysis: &Analysis, view: LayerView, output: &mut impl Write) -> Result<()> {
+    serde_json::to_writer_pretty(&mut *output, &Document { analysis, view })?;
+    writeln!(output)?;
+    output.flush()?;
 
     Ok(())
 }

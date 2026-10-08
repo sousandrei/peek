@@ -1,4 +1,6 @@
 mod commands;
+mod history;
+mod output;
 
 use anyhow::Result;
 use std::path::PathBuf;
@@ -9,6 +11,10 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 #[command(
     version,
     about = "Container image filesystem explorer and analyzer",
+    color = match output::color_choice() {
+        anstream::ColorChoice::Never => clap::ColorChoice::Never,
+        _ => clap::ColorChoice::Auto,
+    },
     disable_version_flag = true,
     args_conflicts_with_subcommands = true,
     subcommand_negates_reqs = true
@@ -45,9 +51,13 @@ pub struct AnalyzeOptions {
     #[command(flatten)]
     pub image: ImageOptions,
 
-    /// Export analysis to this JSON file
-    #[arg(short = 'j', long, value_name = "PATH")]
-    pub json: Option<PathBuf>,
+    /// Format analysis as JSON (stdout unless --output is supplied)
+    #[arg(short = 'j', long)]
+    pub json: bool,
+
+    /// Write JSON to a new file instead of stdout
+    #[arg(short = 'o', long, value_name = "PATH", requires = "json")]
+    pub output: Option<PathBuf>,
 
     /// JSON layer view: incremental changes or cumulative filesystem
     #[arg(long, value_enum, default_value = "diff", requires = "json")]

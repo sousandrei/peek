@@ -7,7 +7,7 @@ mod layer;
 mod model;
 
 pub use filesystem::analyze;
-pub use model::{Analysis, Change, FileEntry, Filesystem, Image, LayerAnalysis};
+pub use model::{Analysis, Change, ChangeKind, FileEntry, Filesystem, Image, LayerAnalysis};
 
 use std::fs::File;
 use std::io::Cursor;
@@ -71,7 +71,7 @@ pub fn load(reference: &str, mut source: Source) -> Result<Image> {
 }
 
 #[cfg(test)]
-pub(crate) use model::{ChangeKind, FileKind};
+pub(crate) use model::FileKind;
 
 #[cfg(test)]
 pub fn archive_for_test(bytes: &[u8]) -> Result<Image> {
