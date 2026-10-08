@@ -14,12 +14,18 @@ cargo install --path . --locked
 
 ## Usage
 
-Docker must be running. Use an image already available locally; these examples use Ubuntu and Redis.
+Docker must be running. Use an image and tag already available locally; these examples use Ubuntu and Redis. Untagged names select `:latest`.
 
 ```sh
 docker image ls
 peek analyze ubuntu:latest
 peek analyze redis:latest
+```
+
+For multi-platform images, Peek selects the host platform. The requested variant must already be available locally; Peek does not pull images. Select another locally available platform with `--platform`:
+
+```sh
+peek analyze ubuntu:latest --platform linux/arm64
 ```
 
 Terminal output groups file changes by layer and formats image commands for readability. Color is enabled automatically where supported; set `NO_COLOR=1` to disable it.

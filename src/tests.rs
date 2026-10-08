@@ -346,7 +346,7 @@ fn valid_reference_archives_load_offline() {
         "test-oci-estargz-image.tar",
     ] {
         let path = format!("{}/../dive/.data/{name}", env!("CARGO_MANIFEST_DIR"));
-        let image = oci::load(&path, oci::Source::DockerArchive)
+        let image = oci::load(&path, oci::Source::DockerArchive, None)
             .unwrap_or_else(|e| panic!("{name}: {e:#}"));
         let result = oci::analyze(image).unwrap_or_else(|e| panic!("{name}: {e:#}"));
         assert!(!result.layers.is_empty());
@@ -359,7 +359,7 @@ fn reference_oci_archive_with_misordered_diff_ids_is_rejected() {
         "{}/../dive/.data/test-oci-docker-image.tar",
         env!("CARGO_MANIFEST_DIR")
     );
-    let error = oci::load(&path, oci::Source::DockerArchive).unwrap_err();
+    let error = oci::load(&path, oci::Source::DockerArchive, None).unwrap_err();
 
     assert!(format!("{error:#}").contains("uncompressed layer digest mismatch"));
 }

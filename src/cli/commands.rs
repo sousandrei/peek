@@ -21,7 +21,7 @@ fn load(options: &ImageOptions) -> Result<oci::Analysis> {
         Source::Podman => oci::Source::Podman,
     };
 
-    oci::analyze(oci::load(reference, source)?)
+    oci::analyze(oci::load(reference, source, options.platform.as_ref())?)
 }
 
 pub(super) fn inspect(options: &ImageOptions) -> Result<()> {

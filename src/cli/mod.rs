@@ -41,6 +41,10 @@ pub struct ImageOptions {
     #[arg(long, value_enum, default_value = "docker")]
     pub source: Source,
 
+    /// Container platform; multi-platform images default to the host platform
+    #[arg(long, value_name = "OS/ARCH[/VARIANT]")]
+    pub platform: Option<crate::oci::Platform>,
+
     /// Continue despite image parsing errors
     #[arg(short = 'i', long)]
     pub ignore_errors: bool,

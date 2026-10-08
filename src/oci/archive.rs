@@ -6,6 +6,7 @@ use std::io::{Read, Seek, SeekFrom};
 use anyhow::{Context, Result, bail, ensure};
 use serde::Deserialize;
 
+use super::Platform;
 use super::digest::hash_reader;
 use super::layer::read_layer;
 use super::model::{Image, ImageMetadata, Layer};
@@ -25,6 +26,8 @@ struct Descriptor {
     media_type: String,
     #[serde(default)]
     annotations: BTreeMap<String, String>,
+    #[serde(default)]
+    platform: Option<Platform>,
 }
 
 #[derive(Deserialize)]
@@ -56,6 +59,8 @@ struct Config {
     #[serde(default)]
     history: Vec<History>,
     #[serde(default)]
+    variant: Option<String>,
+    #[serde(default)]
     rootfs: Rootfs,
 }
 
@@ -78,16 +83,20 @@ struct LayerSource {
     descriptor: Option<Descriptor>,
 }
 
-pub fn read<R: Read + Seek>(reader: &mut R, reference: &str) -> Result<Image> {
+pub fn read<R: Read + Seek>(
+    reader: &mut R,
+    reference: &str,
+    platform: Option<&Platform>,
+) -> Result<Image> {
     let blobs = index_archive(reader)?;
     let ManifestData {
         config,
         layer_sources,
         tags,
     } = if blobs.contains_key("index.json") {
-        read_oci_manifest(reader, &blobs)?
+        read_oci_manifest(reader, &blobs, platform)?
     } else {
-        read_docker_manifest(reader, &blobs)?
+        read_docker_manifest(reader, &blobs, platform)?
     };
 
     ensure!(
@@ -153,65 +162,99 @@ struct ManifestData {
     tags: Vec<String>,
 }
 
+#[derive(Default)]
+struct ManifestSelection {
+    candidates: Vec<ManifestData>,
+    platforms: BTreeSet<String>,
+}
+
 fn read_oci_manifest<R: Read + Seek>(
     reader: &mut R,
     blobs: &BTreeMap<String, Blob>,
+    platform: Option<&Platform>,
 ) -> Result<ManifestData> {
     let index: Index = read_json(reader, blobs, "index.json")?;
-    ensure!(
-        index.manifests.len() == 1,
-        "OCI archive must select exactly one image; multi-image/platform selection is not supported yet"
-    );
+    let target = platform.cloned().unwrap_or_else(Platform::host);
+    let selection = collect_manifests(
+        reader,
+        blobs,
+        index,
+        &target,
+        platform.is_some(),
+        &mut BTreeSet::new(),
+        Vec::new(),
+    )?;
 
-    let mut descriptor = index
-        .manifests
-        .into_iter()
-        .next()
-        .context("empty OCI index")?;
-    let tags = descriptor
-        .annotations
-        .get("io.containerd.image.name")
-        .or_else(|| {
-            descriptor
-                .annotations
-                .get("org.opencontainers.image.ref.name")
-        })
-        .into_iter()
-        .cloned()
-        .collect();
+    select_manifest(selection.candidates, &target, selection.platforms)
+}
 
-    let mut visited = BTreeSet::new();
-    let manifest = loop {
+fn collect_manifests<R: Read + Seek>(
+    reader: &mut R,
+    blobs: &BTreeMap<String, Blob>,
+    index: Index,
+    target: &Platform,
+    selecting: bool,
+    visited: &mut BTreeSet<String>,
+    tags: Vec<String>,
+) -> Result<ManifestSelection> {
+    let mut selection = ManifestSelection::default();
+    let selecting = selecting || index.manifests.len() > 1;
+    for descriptor in index.manifests {
+        if selecting
+            && let Some(platform) = &descriptor.platform
+            && !target.matches(platform)
+        {
+            if blobs.contains_key(&descriptor_path(&descriptor)?) {
+                selection.platforms.insert(platform.to_string());
+            }
+            continue;
+        }
+
+        ensure!(visited.len() < 64, "OCI index nesting exceeds 64 levels");
         ensure!(
             visited.insert(descriptor.digest.clone()),
             "cyclic OCI index"
         );
         let path = descriptor_path(&descriptor)?;
         verify_blob(reader, blobs, &path, &descriptor)?;
+        let tags = descriptor_tags(&descriptor).unwrap_or_else(|| tags.clone());
+
         if descriptor.media_type.ends_with("index.v1+json")
             || descriptor.media_type.ends_with("manifest.list.v2+json")
         {
-            let index: Index = read_json(reader, blobs, &path)?;
-            ensure!(
-                index.manifests.len() == 1,
-                "OCI index requires image/platform selection"
-            );
-            descriptor = index
-                .manifests
-                .into_iter()
-                .next()
-                .context("empty OCI index")?;
+            let index = read_json(reader, blobs, &path)?;
+            let nested = collect_manifests(reader, blobs, index, target, selecting, visited, tags)?;
+            selection.candidates.extend(nested.candidates);
+            selection.platforms.extend(nested.platforms);
         } else {
-            let manifest: Manifest = read_json(reader, blobs, &path)?;
-            break manifest;
+            let candidate = read_manifest(reader, blobs, &path, tags)?;
+            let mut actual = candidate.config.platform();
+            if actual.variant.is_none() {
+                actual.variant = descriptor.platform.as_ref().and_then(|p| p.variant.clone());
+            }
+            selection.platforms.insert(actual.to_string());
+            if !selecting || target.matches(&actual) {
+                selection.candidates.push(candidate);
+            }
         }
-    };
 
-    let path = descriptor_path(&manifest.config)?;
-    verify_blob(reader, blobs, &path, &manifest.config)?;
-    let config: Config = read_json(reader, blobs, &path)?;
+        visited.remove(&descriptor.digest);
+    }
+    Ok(selection)
+}
 
-    let sources = manifest
+fn read_manifest<R: Read + Seek>(
+    reader: &mut R,
+    blobs: &BTreeMap<String, Blob>,
+    path: &str,
+    tags: Vec<String>,
+) -> Result<ManifestData> {
+    let manifest: Manifest = read_json(reader, blobs, path)?;
+    let config_path = descriptor_path(&manifest.config)?;
+    verify_blob(reader, blobs, &config_path, &manifest.config)?;
+    let config = read_json(reader, blobs, &config_path)?;
+
+    let layer_sources = manifest
         .layers
         .into_iter()
         .map(|descriptor| {
@@ -224,41 +267,104 @@ fn read_oci_manifest<R: Read + Seek>(
 
     Ok(ManifestData {
         config,
-        layer_sources: sources,
+        layer_sources,
         tags,
     })
+}
+
+impl Config {
+    fn platform(&self) -> Platform {
+        Platform {
+            os: self.os.clone(),
+            architecture: self.architecture.clone(),
+            variant: self.variant.clone(),
+        }
+    }
+}
+
+fn descriptor_tags(descriptor: &Descriptor) -> Option<Vec<String>> {
+    descriptor
+        .annotations
+        .get("io.containerd.image.name")
+        .or_else(|| {
+            descriptor
+                .annotations
+                .get("org.opencontainers.image.ref.name")
+        })
+        .map(|tag| vec![tag.clone()])
+}
+
+fn select_manifest(
+    mut candidates: Vec<ManifestData>,
+    target: &Platform,
+    platforms: BTreeSet<String>,
+) -> Result<ManifestData> {
+    let platforms = platforms.into_iter().collect::<Vec<_>>().join(", ");
+    ensure!(
+        !candidates.is_empty(),
+        "no image available for platform {target}; archive platforms: {}. For engine images, fetch the requested platform locally first; for archives, provide an archive containing it",
+        if platforms.is_empty() {
+            "(none)"
+        } else {
+            &platforms
+        }
+    );
+    if candidates.len() > 1 {
+        let references = candidates
+            .iter()
+            .flat_map(|candidate| candidate.tags.iter().map(String::as_str))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join(", ");
+        bail!(
+            "multiple images match platform {target}; select an explicit image tag or save a single image, or specify --platform OS/ARCH/VARIANT for variant matches. Matching image tags: {}",
+            if references.is_empty() {
+                "(untagged)"
+            } else {
+                &references
+            }
+        );
+    }
+    Ok(candidates.remove(0))
 }
 
 fn read_docker_manifest<R: Read + Seek>(
     reader: &mut R,
     blobs: &BTreeMap<String, Blob>,
+    platform: Option<&Platform>,
 ) -> Result<ManifestData> {
     let manifests: Vec<DockerManifest> = read_json(reader, blobs, "manifest.json")
         .context("archive contains neither an OCI index nor a Docker manifest")?;
-    ensure!(
-        manifests.len() == 1,
-        "Docker archive contains multiple images; selection is not supported yet"
-    );
-    let manifest = manifests
-        .into_iter()
-        .next()
-        .context("empty Docker manifest")?;
-    let config: Config = read_json(reader, blobs, &manifest.config)?;
+    let target = platform.cloned().unwrap_or_else(Platform::host);
+    let selecting = platform.is_some() || manifests.len() > 1;
+    let mut candidates = Vec::new();
+    let mut platforms = BTreeSet::new();
 
-    let sources = manifest
-        .layers
-        .into_iter()
-        .map(|path| LayerSource {
-            path,
-            descriptor: None,
-        })
-        .collect();
+    for manifest in manifests {
+        let config: Config = read_json(reader, blobs, &manifest.config)?;
+        let actual = config.platform();
+        platforms.insert(actual.to_string());
+        if selecting && !target.matches(&actual) {
+            continue;
+        }
 
-    Ok(ManifestData {
-        config,
-        layer_sources: sources,
-        tags: manifest.repo_tags.unwrap_or_default(),
-    })
+        let layer_sources = manifest
+            .layers
+            .into_iter()
+            .map(|path| LayerSource {
+                path,
+                descriptor: None,
+            })
+            .collect();
+        candidates.push(ManifestData {
+            config,
+            layer_sources,
+            tags: manifest.repo_tags.unwrap_or_default(),
+        });
+    }
+
+    select_manifest(candidates, &target, platforms)
 }
 
 fn index_archive<R: Read + Seek>(reader: &mut R) -> Result<BTreeMap<String, Blob>> {
