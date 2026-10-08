@@ -4,6 +4,7 @@ mod archive;
 mod digest;
 mod engine;
 mod filesystem;
+mod input;
 mod layer;
 mod model;
 mod platform;

@@ -4,10 +4,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek, SeekFrom};
 
 use anyhow::{Context, Result, bail, ensure};
+use rayon::prelude::*;
 use serde::Deserialize;
 
 use super::Platform;
-use super::digest::hash_reader;
+use super::digest::{HashingReader, hash_reader};
+use super::input::ArchiveInput;
 use super::layer::read_layer;
 use super::model::{Image, ImageMetadata, Layer};
 
@@ -83,7 +85,7 @@ struct LayerSource {
     descriptor: Option<Descriptor>,
 }
 
-pub fn read<R: Read + Seek>(
+pub fn read<R: ArchiveInput>(
     reader: &mut R,
     reference: &str,
     platform: Option<&Platform>,
@@ -104,46 +106,44 @@ pub fn read<R: Read + Seek>(
         "config diff_ids count does not match manifest layer count"
     );
 
-    let mut history = config.history.iter().filter(|entry| !entry.empty_layer);
-    let mut layers = Vec::with_capacity(layer_sources.len());
-
-    for (index, source) in layer_sources.into_iter().enumerate() {
-        if let Some(descriptor) = &source.descriptor {
-            verify_blob(reader, &blobs, &source.path, descriptor)?;
-        }
-
-        let blob = resolve_blob(&blobs, &source.path)?;
-        reader.seek(SeekFrom::Start(blob.offset))?;
-        let parsed = read_layer(
-            reader.take(blob.size),
+    let commands: Vec<_> = config
+        .history
+        .iter()
+        .filter(|entry| !entry.empty_layer)
+        .map(|entry| entry.created_by.clone())
+        .collect();
+    let parse = |(index, source)| {
+        parse_layer(
+            reader,
+            &blobs,
             index,
-            source.descriptor.as_ref().map(|d| d.media_type.as_str()),
+            source,
+            config.rootfs.diff_ids.get(index),
+            commands.get(index),
         )
-        .with_context(|| format!("cannot parse layer {index} ({})", source.path))?;
+    };
 
-        if let Some(expected) = config.rootfs.diff_ids.get(index) {
-            ensure!(
-                parsed.diff_id == *expected,
-                "uncompressed layer digest mismatch at layer {index}"
-            );
-        }
-
-        layers.push(Layer {
-            index,
-            id: source
-                .descriptor
-                .as_ref()
-                .map(|d| d.digest.clone())
-                .unwrap_or(source.path),
-            diff_id: Some(parsed.diff_id),
-            command: history
-                .next()
-                .map(|entry| entry.created_by.clone())
-                .unwrap_or_else(|| "(missing)".into()),
-            blob_size_bytes: blob.size,
-            entries: parsed.entries,
-        });
-    }
+    // Decode independently, then restore manifest order before applying filesystem changes.
+    let workers = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1)
+        .min(layer_sources.len());
+    let results: Vec<_> = if workers > 1 {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(workers)
+            .build()
+            .context("cannot create layer decoding workers")?
+            .install(|| {
+                layer_sources
+                    .into_par_iter()
+                    .enumerate()
+                    .map(parse)
+                    .collect()
+            })
+    } else {
+        layer_sources.into_iter().enumerate().map(parse).collect()
+    };
+    let layers = results.into_iter().collect::<Result<Vec<_>>>()?;
 
     Ok(Image {
         metadata: ImageMetadata {
@@ -153,6 +153,59 @@ pub fn read<R: Read + Seek>(
             os: config.os,
         },
         layers,
+    })
+}
+
+fn parse_layer<R: ArchiveInput>(
+    reader: &R,
+    blobs: &BTreeMap<String, Blob>,
+    index: usize,
+    source: LayerSource,
+    expected_diff_id: Option<&String>,
+    command: Option<&String>,
+) -> Result<Layer> {
+    let blob = resolve_blob(blobs, &source.path)?;
+    let input = reader.range(blob.offset, blob.size)?;
+    let parsed = if let Some(descriptor) = &source.descriptor {
+        ensure!(
+            blob.size == descriptor.size,
+            "OCI size mismatch for {}",
+            descriptor.digest
+        );
+        let mut input = HashingReader::new(input);
+        let parsed = read_layer(&mut input, index, Some(&descriptor.media_type));
+
+        // Verify stored bytes while decoding, including unread bytes after a parse error.
+        std::io::copy(&mut input, &mut std::io::sink())?;
+        ensure!(
+            input.digest() == descriptor.digest,
+            "OCI digest mismatch for {}",
+            descriptor.digest
+        );
+        parsed
+    } else {
+        read_layer(input, index, None)
+    }
+    .with_context(|| format!("cannot parse layer {index} ({})", source.path))?;
+
+    if let Some(expected) = expected_diff_id {
+        ensure!(
+            parsed.diff_id == *expected,
+            "uncompressed layer digest mismatch at layer {index}"
+        );
+    }
+
+    Ok(Layer {
+        index,
+        id: source
+            .descriptor
+            .as_ref()
+            .map(|descriptor| descriptor.digest.clone())
+            .unwrap_or(source.path),
+        diff_id: Some(parsed.diff_id),
+        command: command.cloned().unwrap_or_else(|| "(missing)".into()),
+        blob_size_bytes: blob.size,
+        entries: parsed.entries,
     })
 }
 
