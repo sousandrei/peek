@@ -1,9 +1,11 @@
-mod analysis;
 mod cli;
 mod export;
-mod image;
+mod oci;
 mod tui;
 
-fn main() -> std::io::Result<()> {
+fn main() -> anyhow::Result<()> {
     cli::run()
 }
+
+#[cfg(test)]
+mod tests;

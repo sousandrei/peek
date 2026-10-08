@@ -1,7 +1,9 @@
 //! Interactive image exploration with Ratatui.
 
-use std::io;
+use anyhow::Result;
 
-pub fn run() -> io::Result<()> {
+use crate::oci::Analysis;
+
+pub fn run(_analysis: &Analysis) -> Result<()> {
     Ok(())
 }

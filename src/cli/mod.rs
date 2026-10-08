@@ -1,6 +1,6 @@
 mod commands;
 
-use std::io;
+use anyhow::Result;
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -8,7 +8,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 #[derive(Debug, Parser)]
 #[command(
     version,
-    about = "Container image explorer (skeleton; operations are placeholders)",
+    about = "Container image filesystem explorer and analyzer",
     disable_version_flag = true,
     args_conflicts_with_subcommands = true,
     subcommand_negates_reqs = true
@@ -49,6 +49,10 @@ pub struct AnalyzeOptions {
     #[arg(short = 'j', long, value_name = "PATH")]
     pub json: Option<PathBuf>,
 
+    /// JSON layer view: incremental changes or cumulative filesystem
+    #[arg(long, value_enum, default_value = "diff", requires = "json")]
+    pub layers: LayerFormat,
+
     /// Minimum efficiency ratio, or disabled
     #[arg(long = "lowestEfficiency", value_name = "VALUE")]
     pub lowest_efficiency: Option<String>,
@@ -64,7 +68,7 @@ pub struct AnalyzeOptions {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Analyze an image and evaluate supplied rules without opening the TUI (placeholder)
+    /// Analyze an image and evaluate supplied rules without opening the TUI
     #[command(visible_alias = "a")]
     Analyze(AnalyzeOptions),
     /// Print the application version
@@ -75,6 +79,12 @@ pub enum Command {
         #[arg(value_enum)]
         shell: Shell,
     },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum LayerFormat {
+    Diff,
+    Full,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -92,7 +102,7 @@ pub enum Shell {
     Zsh,
 }
 
-pub fn run() -> io::Result<()> {
+pub fn run() -> Result<()> {
     let cli = Cli::parse();
 
     match &cli.command {
