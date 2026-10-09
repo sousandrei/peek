@@ -1,5 +1,5 @@
 mod commands;
-mod history;
+pub(crate) mod history;
 mod output;
 
 use anyhow::Result;

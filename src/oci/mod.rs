@@ -8,10 +8,14 @@ mod input;
 mod layer;
 mod model;
 mod platform;
+mod progress;
 
-pub use filesystem::analyze;
-pub use model::{Analysis, Change, ChangeKind, FileEntry, Filesystem, Image, LayerAnalysis};
+pub use filesystem::{analyze, analyze_with_progress};
+pub use model::{
+    Analysis, Change, ChangeKind, FileEntry, FileKind, Filesystem, Image, LayerAnalysis,
+};
 pub use platform::Platform;
+pub use progress::LoadProgress;
 
 use std::fs::File;
 #[cfg(test)]
@@ -26,7 +30,25 @@ pub enum Source {
     Podman,
 }
 
-pub fn load(reference: &str, mut source: Source, platform: Option<&Platform>) -> Result<Image> {
+pub fn load(reference: &str, source: Source, platform: Option<&Platform>) -> Result<Image> {
+    load_image(reference, source, platform, None)
+}
+
+pub fn load_with_progress(
+    reference: &str,
+    source: Source,
+    platform: Option<&Platform>,
+    progress: &LoadProgress,
+) -> Result<Image> {
+    load_image(reference, source, platform, Some(progress))
+}
+
+fn load_image(
+    reference: &str,
+    mut source: Source,
+    platform: Option<&Platform>,
+    progress: Option<&LoadProgress>,
+) -> Result<Image> {
     let reference = if let Some((scheme, image)) = reference.split_once("://") {
         source = match scheme {
             "docker" => Source::Docker,
@@ -41,6 +63,7 @@ pub fn load(reference: &str, mut source: Source, platform: Option<&Platform>) ->
 
     match source {
         Source::DockerArchive => {
+            progress::report(progress, "Reading image archive")?;
             let mut file = File::open(reference)
                 .with_context(|| format!("cannot open image archive {reference:?}"))?;
             archive::read(&mut file, reference, platform)
@@ -51,13 +74,10 @@ pub fn load(reference: &str, mut source: Source, platform: Option<&Platform>) ->
                 Source::Docker => "docker",
                 _ => "podman",
             };
-            engine::load(engine, reference, platform)
+            engine::load(engine, reference, platform, progress)
         }
     }
 }
-
-#[cfg(test)]
-pub(crate) use model::FileKind;
 
 #[cfg(test)]
 pub fn archive_for_test(bytes: &[u8]) -> Result<Image> {

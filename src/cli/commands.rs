@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use super::{AnalyzeOptions, ImageOptions, LayerFormat, Shell, Source, output};
 use crate::{export, oci, tui};
 
-fn load(options: &ImageOptions) -> Result<oci::Analysis> {
+fn image_input(options: &ImageOptions) -> Result<(&str, oci::Source)> {
     if options.ignore_errors {
         bail!("best-effort archive parsing is not implemented; omit --ignore-errors");
     }
@@ -21,15 +21,21 @@ fn load(options: &ImageOptions) -> Result<oci::Analysis> {
         Source::Podman => oci::Source::Podman,
     };
 
-    oci::analyze(oci::load(reference, source, options.platform.as_ref())?)
+    Ok((reference, source))
 }
 
 pub(super) fn inspect(options: &ImageOptions) -> Result<()> {
-    tui::run(&load(options)?)
+    let (reference, source) = image_input(options)?;
+    tui::run(reference, source, options.platform.as_ref())
 }
 
 pub(super) fn analyze(options: &AnalyzeOptions) -> Result<()> {
-    let analysis = load(&options.image)?;
+    let (reference, source) = image_input(&options.image)?;
+    let analysis = oci::analyze(oci::load(
+        reference,
+        source,
+        options.image.platform.as_ref(),
+    )?)?;
 
     if options.json {
         json_output(&analysis, options)

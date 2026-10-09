@@ -3,7 +3,7 @@
 use std::iter::Peekable;
 use std::str::Chars;
 
-pub(super) fn layout(command: &str) -> String {
+pub(crate) fn layout(command: &str) -> String {
     // A heredoc body can contain arbitrary text; leave its layout intact.
     if command.contains("<<") {
         return command.to_owned();

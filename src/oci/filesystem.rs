@@ -5,6 +5,8 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, ensure};
 
+use super::{LoadProgress, progress};
+
 use super::model::{
     Analysis, Change, ChangeKind, FileEntry, FileKind, Filesystem, Image, LayerAnalysis,
 };
@@ -12,10 +14,20 @@ use super::model::{
 type PreviousEntries = BTreeMap<String, Option<Arc<FileEntry>>>;
 
 pub fn analyze(image: Image) -> Result<Analysis> {
+    analyze_image(image, None)
+}
+
+pub fn analyze_with_progress(image: Image, progress: &LoadProgress) -> Result<Analysis> {
+    analyze_image(image, Some(progress))
+}
+
+fn analyze_image(image: Image, progress: Option<&LoadProgress>) -> Result<Analysis> {
+    progress::report(progress, "Analyzing layer differences")?;
     let mut filesystem = Filesystem::new();
     let mut layers = Vec::with_capacity(image.layers.len());
 
     for layer in image.layers {
+        progress::report(progress, "Analyzing layer differences")?;
         let (changes, updates) = apply_layer(&mut filesystem, &layer.entries)
             .with_context(|| format!("cannot apply layer {} ({})", layer.index, layer.id))?;
         layers.push(LayerAnalysis {
