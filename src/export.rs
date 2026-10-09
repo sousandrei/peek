@@ -97,8 +97,3 @@ enum LayerData<'a> {
     Diff { changes: &'a [Change] },
     Full { files: Vec<&'a FileEntry> },
 }
-
-#[cfg(test)]
-pub fn value(analysis: &Analysis, view: LayerView) -> serde_json::Value {
-    serde_json::to_value(Document { analysis, view }).expect("serialize test analysis")
-}

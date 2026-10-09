@@ -60,4 +60,6 @@ cargo test --locked --all-targets
 cargo build --locked --all-targets
 ```
 
+`cargo test` requires Docker and Buildx. Each test process creates a uniquely named temporary `docker-container` builder, reuses it for all image fixtures, then removes its container and cache volume on success or ordinary test failure. Concurrent test runs use separate builders. A forced process termination can bypass cleanup.
+
 Thanks to [Alex Goodman](https://github.com/wagoodman) for making Dive and inspiring Peek.
