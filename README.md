@@ -1,49 +1,63 @@
 # Peek
 
-Peek shows file additions, modifications, and deletions between container image layers. Read the results in your terminal or export them as JSON.
+[![CI](https://github.com/sousandrei/peek/actions/workflows/ci.yml/badge.svg)](https://github.com/sousandrei/peek/actions/workflows/ci.yml)
 
-## Install
+Peek lets you look inside a container image, one layer at a time. It’s a Rust project inspired by [Dive](https://github.com/wagoodman/dive).
 
-With Rust and Cargo installed, run from this directory:
+## What it does
+
+- Opens an image in a terminal UI where you can browse layers, their commands, and the files they leave behind.
+- Marks files that were added, changed, or deleted. Select a file to see its metadata and which layer it came from.
+- Lets you filter paths, fold directories, compare against the image base, and sort by name or size.
+- Prints layer changes in the terminal or writes them as JSON. Use `--layers full` to export the filesystem after each layer.
+- Works with Docker and Podman images, including platform selection. Peek asks the selected engine to pull an image if it isn’t available locally.
+- Reads saved Docker image archives too, so you can inspect them without running an engine.
+
+Peek looks at images you already build with Docker, Podman, or another tool. It doesn’t build images itself.
+
+## Get started
+
+Install Rust and Cargo, then install Peek from GitHub:
 
 ```sh
-cargo install --path . --locked
+cargo install --git https://github.com/sousandrei/peek.git --locked
 ```
 
-## Usage
+Open an image in the interactive UI:
 
-Use Docker or Podman. Peek pulls missing images and platform variants into the selected engine’s image store. Untagged image names use `:latest`.
+```sh
+peek ubuntu:latest
+```
+
+Use the arrow keys or mouse to move around. Tab switches between layers and files; Ctrl+Down or a click focuses the command pane. Press `?` for the shortcuts or `q` to quit.
+
+To print or export layer changes, run:
 
 ```sh
 peek analyze ubuntu:latest
-peek analyze redis:latest --source podman
-peek analyze ubuntu:latest --platform linux/arm64
-```
-
-### JSON output
-
-```sh
-# Write layer changes to stdout
 peek analyze ubuntu:latest --json
-
-# Save layer changes to a new file
-peek analyze ubuntu:latest --json -o changes.json
-
-# Save the complete filesystem listing after each layer
-peek analyze ubuntu:latest --json --layers full -o files.json
+peek analyze ubuntu:latest --json --output changes.json
 ```
 
-Existing output files are not overwritten. Set `NO_COLOR=1` to disable terminal colors.
-
-Use `peek analyze --help` for options. `peek a` is shorthand for `peek analyze`; `peek v` prints the version.
-
-## Contributing
-
-From this directory:
+You can pick an engine or platform, or export the complete filesystem after every layer:
 
 ```sh
-cargo run -- analyze ubuntu:latest
-cargo fmt --check
-cargo check --locked
-cargo clippy --locked --all-targets -- -D warnings
+peek --source podman ubuntu:latest
+peek --platform linux/arm64 ubuntu:latest
+peek analyze ubuntu:latest --json --layers full --output filesystem.json
 ```
+
+Docker or Podman is needed for images from an engine. A saved Docker archive works on its own. Run `peek --help` or `peek analyze --help` to see all the options.
+
+## Development
+
+From the repository root, run the checks with:
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked --all-targets
+cargo build --locked --all-targets
+```
+
+Thanks to [Alex Goodman](https://github.com/wagoodman) for making Dive and inspiring Peek.
