@@ -4,7 +4,9 @@
 
 Peek lets you explore a container image one layer at a time. It’s a Rust project inspired by [Dive](https://github.com/wagoodman).
 
-![Peek terminal demo](assets/demo.gif)
+<p align="center">
+  <img src="assets/demo.gif" alt="Peek terminal demo" width="760">
+</p>
 
 ## What it does
 
@@ -16,7 +18,13 @@ Peek can inspect images through Docker or Podman, or read a saved Docker archive
 
 ## Installation
 
-TODO: add installation instructions.
+Install the latest release on Linux x86_64 or ARM64, or macOS on Apple Silicon or Intel:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/sousandrei/peek/main/install.sh | bash
+```
+
+The installer puts `peek` in `~/.local/bin`. Windows x86_64 binaries are available on the [GitHub Releases](https://github.com/sousandrei/peek/releases) page.
 
 ## Usage
 

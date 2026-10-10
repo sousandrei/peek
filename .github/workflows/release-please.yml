@@ -14,12 +14,81 @@ concurrency:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     permissions:
       contents: write
       issues: write
       pull-requests: write
     steps:
       - uses: googleapis/release-please-action@v5
+        id: release
         with:
           release-type: rust
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+  build-release-assets:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            asset: peek-linux-x86_64
+            binary: peek
+          - os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            asset: peek-linux-aarch64
+            binary: peek
+          - os: macos-15
+            target: aarch64-apple-darwin
+            asset: peek-macos-aarch64
+            binary: peek
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            asset: peek-macos-x86_64
+            binary: peek
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            asset: peek-windows-x86_64.exe
+            binary: peek.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          target: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Build release binary
+        run: cargo build --locked --release --target ${{ matrix.target }}
+      - name: Stage release asset
+        shell: bash
+        run: cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" "${{ matrix.asset }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-release-assets:
+    needs: [release-please, build-release-assets]
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Attach binaries to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: gh release upload "$RELEASE_TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
