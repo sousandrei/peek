@@ -2,36 +2,33 @@
 
 [![CI](https://github.com/sousandrei/peek/actions/workflows/ci.yml/badge.svg)](https://github.com/sousandrei/peek/actions/workflows/ci.yml)
 
-Peek lets you look inside a container image, one layer at a time. It’s a Rust project inspired by [Dive](https://github.com/wagoodman/dive).
+Peek lets you explore a container image one layer at a time. It’s a Rust project inspired by [Dive](https://github.com/wagoodman).
+
+![Peek terminal demo](assets/demo.gif)
 
 ## What it does
 
-- Opens an image in a terminal UI where you can browse layers, their commands, and the files they leave behind.
-- Marks files that were added, changed, or deleted. Select a file to see its metadata and which layer it came from.
-- Lets you filter paths, fold directories, compare against the image base, and sort by name or size.
-- Prints layer changes in the terminal or writes them as JSON. Use `--layers full` to export the filesystem after each layer.
-- Works with Docker and Podman images, including platform selection. Peek asks the selected engine to pull an image if it isn’t available locally.
-- Reads saved Docker image archives too, so you can inspect them without running an engine.
+Run Peek to open an image in the terminal UI. Browse layers and files, see what changed between layers, filter paths, and inspect file metadata.
 
-Peek looks at images you already build with Docker, Podman, or another tool. It doesn’t build images itself.
+Run `peek analyze IMAGE` to print a readable summary of added, changed, and deleted files. Add `--json` to print JSON to stdout; combine it with `--output PATH` to write JSON to a new file. Use `--layers full` with JSON to include the filesystem after each layer.
 
-## Get started
+Peek can inspect images through Docker or Podman, or read a saved Docker archive. It analyzes images you build with your container tool; it does not build images itself.
 
-Install Rust and Cargo, then install Peek from GitHub:
+## Installation
 
-```sh
-cargo install --git https://github.com/sousandrei/peek.git --locked
-```
+TODO: add installation instructions.
 
-Open an image in the interactive UI:
+## Usage
+
+Open an image in the TUI:
 
 ```sh
 peek ubuntu:latest
 ```
 
-Use the arrow keys or mouse to move around. Tab switches between layers and files; Ctrl+Down or a click focuses the command pane. Press `?` for the shortcuts or `q` to quit.
+Use the arrow keys or mouse to browse. Press `?` for shortcuts or `q` to quit.
 
-To print or export layer changes, run:
+Print layer changes, or export them as JSON:
 
 ```sh
 peek analyze ubuntu:latest
@@ -39,27 +36,23 @@ peek analyze ubuntu:latest --json
 peek analyze ubuntu:latest --json --output changes.json
 ```
 
-You can pick an engine or platform, or export the complete filesystem after every layer:
+For a cumulative filesystem view in JSON:
 
 ```sh
-peek --source podman ubuntu:latest
-peek --platform linux/arm64 ubuntu:latest
 peek analyze ubuntu:latest --json --layers full --output filesystem.json
 ```
 
-Docker or Podman is needed for images from an engine. A saved Docker archive works on its own. Run `peek --help` or `peek analyze --help` to see all the options.
-
 ## Development
 
-From the repository root, run the checks with:
+With Rust and Cargo installed:
 
 ```sh
+cargo run -- ubuntu:latest
+cargo test --locked --all-targets
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked --all-targets
-cargo build --locked --all-targets
 ```
 
-`cargo test` requires Docker and Buildx. Each test process creates a uniquely named temporary `docker-container` builder, reuses it for all image fixtures, then removes its container and cache volume on success or ordinary test failure. Concurrent test runs use separate builders. A forced process termination can bypass cleanup.
+Tests use Docker and Buildx.
 
-Thanks to [Alex Goodman](https://github.com/wagoodman) for making Dive and inspiring Peek.
+Thanks to Alex Goodman for making Dive and inspiring Peek.
