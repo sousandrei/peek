@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/sousandrei/peek/compare/v0.1.0...v0.2.0) (2026-10-10)
+
+
+### Features
+
+* add builds to release and install script ([cbe9a70](https://github.com/sousandrei/peek/commit/cbe9a709a855c8727eeace84c7ca9d054ba5b40b))
+
 ## 0.1.0 (2026-10-09)
 
 
