@@ -156,8 +156,8 @@ fn save(
         .with_context(|| format!("cannot read archive returned by {engine}"))
 }
 
-// Drain both pipes concurrently so large exports cannot block the child. Poll
-// cancellation while it runs, then always reap it before releasing the pipes.
+// Drain both pipes concurrently so large exports cannot block the child. The
+// UI can kill the registered child directly; this worker reaps it if it remains alive.
 fn command_output(command: &mut Command, progress: Option<&LoadProgress>) -> Result<Output> {
     let Some(progress) = progress else {
         return command
@@ -173,21 +173,26 @@ fn command_output(command: &mut Command, progress: Option<&LoadProgress>) -> Res
         .context("cannot start image engine command")?;
     let stdout = child.stdout.take().context("missing engine stdout pipe")?;
     let stderr = child.stderr.take().context("missing engine stderr pipe")?;
+    progress
+        .set_child(child)
+        .context("cannot register image engine command")?;
 
     thread::scope(|scope| {
         let stdout = scope.spawn(|| read_pipe(stdout));
         let stderr = scope.spawn(|| read_pipe(stderr));
         let status = loop {
             if progress.is_cancelled() {
-                let _ = child.kill();
-                break child.wait().context("cannot reap cancelled engine command");
+                let _ = progress.kill_child();
+                break progress
+                    .wait_child()
+                    .context("cannot reap cancelled engine command");
             }
-            match child.try_wait() {
+            match progress.try_wait_child() {
                 Ok(Some(status)) => break Ok(status),
                 Ok(None) => thread::sleep(Duration::from_millis(25)),
                 Err(error) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    let _ = progress.kill_child();
+                    let _ = progress.wait_child();
                     break Err(error).context("cannot wait for image engine command");
                 }
             }
@@ -198,6 +203,7 @@ fn command_output(command: &mut Command, progress: Option<&LoadProgress>) -> Res
         let stderr = stderr
             .join()
             .map_err(|_| anyhow::anyhow!("engine stderr reader panicked"))??;
+        progress.clear_child();
         ensure!(!progress.is_cancelled(), "image loading cancelled");
         Ok(Output {
             status: status?,
@@ -230,16 +236,12 @@ fn engine_reference(reference: &str) -> String {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-        mpsc,
-    };
+    use std::sync::mpsc;
 
     #[test]
     fn interactive_commands_capture_both_pipes_and_failure_status() {
         let (sender, _) = mpsc::channel();
-        let progress = LoadProgress::new(sender, Arc::new(AtomicBool::new(false)));
+        let progress = LoadProgress::new(sender);
         let mut command = Command::new("sh");
         command.args(["-c", "printf archive; printf failure >&2; exit 7"]);
         let output = command_output(&mut command, Some(&progress)).unwrap();
@@ -251,12 +253,11 @@ mod tests {
     #[test]
     fn cancelling_an_engine_command_kills_and_reaps_it() {
         let (sender, _) = mpsc::channel();
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let progress = LoadProgress::new(sender, Arc::clone(&cancelled));
+        let progress = LoadProgress::new(sender);
         thread::scope(|scope| {
             scope.spawn(|| {
                 thread::sleep(Duration::from_millis(50));
-                cancelled.store(true, Ordering::Relaxed);
+                progress.cancel();
             });
             let mut command = Command::new("sleep");
             command.arg("10");

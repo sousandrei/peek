@@ -1,10 +1,6 @@
 //! Load on a worker while the terminal stays responsive.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-    mpsc,
-};
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -26,9 +22,9 @@ pub fn load(
 ) -> Result<Option<Analysis>> {
     let started = Instant::now();
     let stage = "Loading image";
-    let cancelled = Arc::new(AtomicBool::new(false));
     let (updates, receiver) = mpsc::channel();
-    let progress = LoadProgress::new(updates, Arc::clone(&cancelled));
+    let progress = Arc::new(LoadProgress::new(updates));
+    let worker_progress = Arc::clone(&progress);
     let worker_reference = reference.to_owned();
     let platform = platform.cloned();
 
@@ -38,27 +34,33 @@ pub fn load(
     let worker = thread::Builder::new()
         .name("image-loader".into())
         .spawn(move || {
-            let image =
-                oci::load_with_progress(&worker_reference, source, platform.as_ref(), &progress)?;
-            oci::analyze_with_progress(image, &progress)
+            let image = oci::load_with_progress(
+                &worker_reference,
+                source,
+                platform.as_ref(),
+                &worker_progress,
+            )?;
+            oci::analyze_with_progress(image, &worker_progress)
         })
         .context("cannot start image loader")?;
 
-    let result = wait_for_image(
-        terminal, theme, reference, started, &cancelled, &receiver, &worker,
-    );
-    if result.is_err() {
-        cancelled.store(true, Ordering::Relaxed);
+    let cancelled = match wait_for_image(
+        terminal, theme, reference, started, &progress, &receiver, &worker,
+    ) {
+        Ok(cancelled) => cancelled,
+        Err(error) => {
+            progress.cancel();
+            drop(worker);
+            return Err(error);
+        }
+    };
+    if cancelled {
+        drop(worker);
+        return Ok(None);
     }
-    // Cancellation is cooperative during decoding; engine children are killed
-    // and reaped. Keep drawing while cancellation finishes, then join the worker.
     let analysis = worker
         .join()
         .map_err(|_| anyhow::anyhow!("image loader panicked"))?;
-    result?;
-    if cancelled.load(Ordering::Relaxed) {
-        return Ok(None);
-    }
     analysis.map(Some)
 }
 
@@ -67,10 +69,10 @@ fn wait_for_image(
     theme: &Theme,
     reference: &str,
     started: Instant,
-    cancelled: &AtomicBool,
+    progress: &LoadProgress,
     receiver: &mpsc::Receiver<&'static str>,
     worker: &thread::JoinHandle<Result<Analysis>>,
-) -> Result<()> {
+) -> Result<bool> {
     let mut stage = "Loading image";
     while !worker.is_finished() {
         while let Ok(update) = receiver.try_recv() {
@@ -84,7 +86,7 @@ fn wait_for_image(
                     reference,
                     stage,
                     started.elapsed(),
-                    cancelled.load(Ordering::Relaxed),
+                    progress.is_cancelled(),
                 )
             })
             .context("cannot draw loading screen")?;
@@ -95,8 +97,9 @@ fn wait_for_image(
                 || (key.code == KeyCode::Char('c')
                     && key.modifiers.contains(KeyModifiers::CONTROL)))
         {
-            cancelled.store(true, Ordering::Relaxed);
+            progress.cancel();
+            return Ok(true);
         }
     }
-    Ok(())
+    Ok(false)
 }

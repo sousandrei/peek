@@ -1,7 +1,9 @@
-//! Loading updates and cooperative cancellation, independent of terminal state.
+//! Loading stage updates and control of the active image-engine child.
 
+use std::io;
+use std::process::{Child, ExitStatus};
 use std::sync::{
-    Arc,
+    Mutex,
     atomic::{AtomicBool, Ordering},
     mpsc::Sender,
 };
@@ -10,12 +12,17 @@ use anyhow::{Result, ensure};
 
 pub struct LoadProgress {
     updates: Sender<&'static str>,
-    cancelled: Arc<AtomicBool>,
+    cancelled: AtomicBool,
+    child: Mutex<Option<Child>>,
 }
 
 impl LoadProgress {
-    pub fn new(updates: Sender<&'static str>, cancelled: Arc<AtomicBool>) -> Self {
-        Self { updates, cancelled }
+    pub fn new(updates: Sender<&'static str>) -> Self {
+        Self {
+            updates,
+            cancelled: AtomicBool::new(false),
+            child: Mutex::new(None),
+        }
     }
 
     pub fn is_cancelled(&self) -> bool {
@@ -26,6 +33,69 @@ impl LoadProgress {
         ensure!(!self.is_cancelled(), "image loading cancelled");
         let _ = self.updates.send(stage);
         Ok(())
+    }
+
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+        if let Ok(mut child) = self.child.lock()
+            && let Some(child) = child.as_mut()
+        {
+            let _ = child.kill();
+        }
+    }
+
+    pub(super) fn set_child(&self, child: Child) -> Result<()> {
+        let mut active = self
+            .child
+            .lock()
+            .map_err(|_| anyhow::anyhow!("image child lock poisoned"))?;
+        if self.is_cancelled() {
+            let mut child = child;
+            let _ = child.kill();
+            return Err(anyhow::anyhow!("image loading cancelled"));
+        }
+        *active = Some(child);
+        Ok(())
+    }
+
+    pub(super) fn try_wait_child(&self) -> io::Result<Option<ExitStatus>> {
+        let mut active = self
+            .child
+            .lock()
+            .map_err(|_| io::Error::other("image child lock poisoned"))?;
+        active
+            .as_mut()
+            .map(Child::try_wait)
+            .transpose()
+            .map(Option::flatten)
+    }
+
+    pub(super) fn kill_child(&self) -> io::Result<()> {
+        let mut active = self
+            .child
+            .lock()
+            .map_err(|_| io::Error::other("image child lock poisoned"))?;
+        if let Some(child) = active.as_mut() {
+            child.kill()?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn wait_child(&self) -> io::Result<ExitStatus> {
+        let mut active = self
+            .child
+            .lock()
+            .map_err(|_| io::Error::other("image child lock poisoned"))?;
+        active
+            .as_mut()
+            .ok_or_else(|| io::Error::other("no active image child"))?
+            .wait()
+    }
+
+    pub(super) fn clear_child(&self) {
+        if let Ok(mut active) = self.child.lock() {
+            active.take();
+        }
     }
 }
 
@@ -44,11 +114,10 @@ mod tests {
     #[test]
     fn updates_report_stages_and_cancellation_stops_loading() {
         let (sender, receiver) = mpsc::channel();
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let progress = LoadProgress::new(sender, Arc::clone(&cancelled));
+        let progress = LoadProgress::new(sender);
         progress.report("Exporting image archive").unwrap();
         assert_eq!(receiver.try_recv().unwrap(), "Exporting image archive");
-        cancelled.store(true, Ordering::Relaxed);
+        progress.cancel();
         assert!(progress.report("Decoding image layers").is_err());
         assert!(receiver.try_recv().is_err());
         assert!(
