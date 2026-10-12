@@ -1,5 +1,5 @@
 use std::fs::OpenOptions;
-use std::io::BufWriter;
+use std::io::{BufWriter, IsTerminal};
 
 use anyhow::{Context, Result, bail};
 
@@ -40,9 +40,9 @@ pub(super) fn analyze(options: &AnalyzeOptions) -> Result<()> {
     if options.json {
         json_output(&analysis, options)
     } else {
-        let mut stdout =
-            anstream::AutoStream::new(std::io::stdout(), output::color_choice()).lock();
-        output::analysis(&analysis, &mut stdout).context("cannot write analysis output")
+        let colors = crate::colors::Colors::detect(std::io::stdout().is_terminal());
+        let mut stdout = anstream::AutoStream::new(std::io::stdout(), colors.color_choice()).lock();
+        output::analysis(&analysis, &mut stdout, colors).context("cannot write analysis output")
     }
 }
 

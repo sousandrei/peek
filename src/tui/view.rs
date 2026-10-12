@@ -1,5 +1,7 @@
 //! Layout and rendering for the layer explorer.
 
+use std::io::IsTerminal;
+
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Layout, Rect},
@@ -10,77 +12,33 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::cli::history;
+use crate::colors::{ColorRole, Colors};
 use crate::oci::FileEntry;
 
 use super::state::{Action, App, Areas, Focus};
 use super::tree::Category;
 
 pub struct Theme {
-    pub background: Color,
-    pub panel: Color,
-    pub text: Color,
-    pub muted: Color,
-    pub border: Color,
-    pub accent: Color,
-    pub selection: Color,
-    pub added: Color,
-    pub modified: Color,
-    pub removed: Color,
+    colors: Colors,
 }
 
 impl Theme {
     pub fn detect() -> Self {
-        if std::env::var_os("NO_COLOR").is_some() {
-            return Self {
-                background: Color::Reset,
-                panel: Color::Reset,
-                text: Color::Reset,
-                muted: Color::Reset,
-                border: Color::Reset,
-                accent: Color::Reset,
-                selection: Color::Reset,
-                added: Color::Reset,
-                modified: Color::Reset,
-                removed: Color::Reset,
-            };
+        Self {
+            colors: Colors::detect(std::io::stdout().is_terminal()),
         }
-        let truecolor =
-            std::env::var("COLORTERM").is_ok_and(|value| value == "truecolor" || value == "24bit");
-        if truecolor {
-            Self {
-                background: Color::Rgb(14, 18, 26),
-                panel: Color::Rgb(20, 25, 35),
-                text: Color::Rgb(218, 226, 238),
-                muted: Color::Rgb(131, 147, 170),
-                border: Color::Rgb(49, 62, 82),
-                accent: Color::Rgb(110, 207, 229),
-                selection: Color::Rgb(36, 54, 74),
-                added: Color::Rgb(144, 211, 151),
-                modified: Color::Rgb(234, 192, 124),
-                removed: Color::Rgb(234, 143, 153),
-            }
-        } else {
-            Self {
-                background: Color::Reset,
-                panel: Color::Reset,
-                text: Color::Gray,
-                muted: Color::DarkGray,
-                border: Color::DarkGray,
-                accent: Color::Cyan,
-                selection: Color::DarkGray,
-                added: Color::Green,
-                modified: Color::Yellow,
-                removed: Color::Red,
-            }
-        }
+    }
+
+    fn color(&self, role: ColorRole) -> Color {
+        self.colors.tui(role)
     }
 
     fn category(&self, category: Category) -> Color {
         match category {
-            Category::Added => self.added,
-            Category::Modified => self.modified,
-            Category::Removed => self.removed,
-            Category::Unchanged => self.muted,
+            Category::Added => self.color(ColorRole::Added),
+            Category::Modified => self.color(ColorRole::Modified),
+            Category::Removed => self.color(ColorRole::Removed),
+            Category::Unchanged => self.color(ColorRole::Muted),
         }
     }
 }
@@ -95,7 +53,11 @@ pub fn draw_loading(
 ) {
     let area = frame.area();
     frame.render_widget(
-        Block::new().style(Style::default().bg(theme.background).fg(theme.text)),
+        Block::new().style(
+            Style::default()
+                .bg(theme.color(ColorRole::Background))
+                .fg(theme.color(ColorRole::Text)),
+        ),
         area,
     );
     let spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -115,12 +77,12 @@ pub fn draw_loading(
                 .collect::<Vec<_>>(),
         )
     }
-    .style(Style::default().fg(theme.muted));
+    .style(Style::default().fg(theme.color(ColorRole::Muted)));
     let lines = vec![
         Line::from(Span::styled(
             "PEEK",
             Style::default()
-                .fg(theme.accent)
+                .fg(theme.color(ColorRole::Accent))
                 .add_modifier(Modifier::BOLD),
         )),
         Line::default(),
@@ -128,11 +90,11 @@ pub fn draw_loading(
         Line::default(),
         Line::from(Span::styled(
             format!("{} {status}", spinner[tick]),
-            Style::default().fg(theme.accent),
+            Style::default().fg(theme.color(ColorRole::Accent)),
         )),
         Line::from(Span::styled(
             format!("{:.1}s elapsed", elapsed.as_secs_f64()),
-            Style::default().fg(theme.muted),
+            Style::default().fg(theme.color(ColorRole::Muted)),
         )),
         Line::default(),
         hint,
@@ -156,13 +118,17 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut App<'_>, theme: &Theme) {
     app.areas = Areas::default();
     let area = frame.area();
     frame.render_widget(
-        Block::new().style(Style::default().bg(theme.background).fg(theme.text)),
+        Block::new().style(
+            Style::default()
+                .bg(theme.color(ColorRole::Background))
+                .fg(theme.color(ColorRole::Text)),
+        ),
         area,
     );
     if area.width < 40 || area.height < 12 {
         frame.render_widget(
             Paragraph::new("Peek\n\nResize to at least 40 × 12.\nPress q to quit.")
-                .style(Style::default().fg(theme.accent)),
+                .style(Style::default().fg(theme.color(ColorRole::Accent))),
             area,
         );
         return;
@@ -224,7 +190,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut App<'_>, theme: &Theme) {
     let [shortcuts, exit] =
         Layout::horizontal([Constraint::Min(0), Constraint::Length(16)]).areas(footer);
     frame.render_widget(
-        Paragraph::new(Line::from(hint)).style(Style::default().fg(theme.muted)),
+        Paragraph::new(Line::from(hint)).style(Style::default().fg(theme.color(ColorRole::Muted))),
         shortcuts,
     );
     frame.render_widget(
@@ -234,7 +200,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut App<'_>, theme: &Theme) {
                 .chain(shortcut_spans("q", " quit"))
                 .collect::<Vec<_>>(),
         ))
-        .style(Style::default().fg(theme.muted)),
+        .style(Style::default().fg(theme.color(ColorRole::Muted))),
         exit,
     );
     app.areas
@@ -257,7 +223,7 @@ fn draw_header(frame: &mut Frame<'_>, app: &App<'_>, theme: &Theme, area: Rect) 
         Span::styled(
             " PEEK ",
             Style::default()
-                .fg(theme.accent)
+                .fg(theme.color(ColorRole::Accent))
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(clean(&app.analysis.image.reference)),
@@ -268,7 +234,7 @@ fn draw_header(frame: &mut Frame<'_>, app: &App<'_>, theme: &Theme, area: Rect) 
                 app.analysis.image.architecture,
                 bytes_label(bytes)
             ),
-            Style::default().fg(theme.muted),
+            Style::default().fg(theme.color(ColorRole::Muted)),
         ),
     ]);
     frame.render_widget(Paragraph::new(title), Rect { height: 1, ..area });
@@ -292,13 +258,13 @@ fn control_buttons(app: &App<'_>, theme: &Theme) -> Vec<(String, Action, Color)>
         (sort, Action::Sort),
         (attrs, Action::Attributes),
     ] {
-        buttons.push((label.into(), action, theme.muted));
+        buttons.push((label.into(), action, theme.color(ColorRole::Muted)));
     }
     for (index, (name, color)) in [
-        ("a Added", theme.added),
-        ("m Modified", theme.modified),
-        ("d Deleted", theme.removed),
-        ("u Unchanged", theme.muted),
+        ("a Added", theme.color(ColorRole::Added)),
+        ("m Modified", theme.color(ColorRole::Modified)),
+        ("d Deleted", theme.color(ColorRole::Removed)),
+        ("u Unchanged", theme.color(ColorRole::Muted)),
     ]
     .into_iter()
     .enumerate()
@@ -307,7 +273,11 @@ fn control_buttons(app: &App<'_>, theme: &Theme) -> Vec<(String, Action, Color)>
         buttons.push((
             format!("{} {name}", if enabled { "●" } else { "○" }),
             Action::Category(index),
-            if enabled { color } else { theme.muted },
+            if enabled {
+                color
+            } else {
+                theme.color(ColorRole::Muted)
+            },
         ));
     }
 
@@ -415,8 +385,12 @@ fn panel<'a>(title: impl Into<Line<'a>>, focused: bool, theme: &Theme) -> Block<
     Block::bordered()
         .border_type(BorderType::Rounded)
         .title(title)
-        .border_style(Style::default().fg(if focused { theme.accent } else { theme.border }))
-        .style(Style::default().bg(theme.panel))
+        .border_style(Style::default().fg(if focused {
+            theme.color(ColorRole::Accent)
+        } else {
+            theme.color(ColorRole::Border)
+        }))
+        .style(Style::default().bg(theme.color(ColorRole::Panel)))
 }
 
 fn draw_layers(frame: &mut Frame<'_>, app: &mut App<'_>, theme: &Theme, area: Rect) {
@@ -454,18 +428,18 @@ fn draw_layers(frame: &mut Frame<'_>, app: &mut App<'_>, theme: &Theme, area: Re
             ListItem::new(Line::from(vec![
                 Span::styled(
                     format!(" {:>2} ", layer.layer.index + 1),
-                    Style::default().fg(theme.muted),
+                    Style::default().fg(theme.color(ColorRole::Muted)),
                 ),
                 Span::styled(
                     format!("{:>9} ", bytes_label(layer.layer.blob_size_bytes)),
-                    Style::default().fg(theme.accent),
+                    Style::default().fg(theme.color(ColorRole::Accent)),
                 ),
                 Span::raw(command),
             ]))
             .style(if counts.iter().all(|count| *count == 0) {
-                Style::default().fg(theme.muted)
+                Style::default().fg(theme.color(ColorRole::Muted))
             } else {
-                Style::default().fg(theme.text)
+                Style::default().fg(theme.color(ColorRole::Text))
             })
         })
         .collect();
@@ -474,8 +448,8 @@ fn draw_layers(frame: &mut Frame<'_>, app: &mut App<'_>, theme: &Theme, area: Re
             .block(block)
             .highlight_style(
                 Style::default()
-                    .bg(theme.selection)
-                    .fg(theme.text)
+                    .bg(theme.color(ColorRole::Selection))
+                    .fg(theme.color(ColorRole::Text))
                     .add_modifier(Modifier::BOLD),
             )
             .highlight_symbol("▌"),
@@ -503,7 +477,7 @@ fn draw_files(frame: &mut Frame<'_>, app: &mut App<'_>, theme: &Theme, area: Rec
             Paragraph::new(message)
                 .block(block)
                 .wrap(Wrap { trim: false })
-                .style(Style::default().fg(theme.muted)),
+                .style(Style::default().fg(theme.color(ColorRole::Muted))),
             area,
         );
         return;
@@ -543,7 +517,7 @@ fn draw_files(frame: &mut Frame<'_>, app: &mut App<'_>, theme: &Theme, area: Rec
                     .unwrap_or_else(|| "                    ".into());
                 spans.push(Span::styled(
                     format!("{attribute}  "),
-                    Style::default().fg(theme.muted),
+                    Style::default().fg(theme.color(ColorRole::Muted)),
                 ));
             }
             let name = format!(
@@ -560,15 +534,15 @@ fn draw_files(frame: &mut Frame<'_>, app: &mut App<'_>, theme: &Theme, area: Rec
             spans.push(Span::styled(
                 name,
                 Style::default().fg(if node.directory {
-                    theme.accent
+                    theme.color(ColorRole::Accent)
                 } else {
-                    theme.text
+                    theme.color(ColorRole::Text)
                 }),
             ));
             if let Some(target) = node.entry().and_then(|entry| entry.link_target.as_ref()) {
                 spans.push(Span::styled(
                     format!(" → {}", clean(target)),
-                    Style::default().fg(theme.muted),
+                    Style::default().fg(theme.color(ColorRole::Muted)),
                 ));
             }
             ListItem::new(Line::from(spans))
@@ -580,7 +554,7 @@ fn draw_files(frame: &mut Frame<'_>, app: &mut App<'_>, theme: &Theme, area: Rec
             .highlight_symbol("▌")
             .highlight_style(
                 Style::default()
-                    .bg(theme.selection)
+                    .bg(theme.color(ColorRole::Selection))
                     .add_modifier(Modifier::BOLD),
             ),
         area,
@@ -600,11 +574,11 @@ fn draw_command(frame: &mut Frame<'_>, app: &mut App<'_>, theme: &Theme, area: R
         let mut lines = vec![
             Line::from(Span::styled(
                 format!(" +{a} added  ~{m} modified  −{d} deleted"),
-                Style::default().fg(theme.muted),
+                Style::default().fg(theme.color(ColorRole::Muted)),
             )),
             Line::from(Span::styled(
                 clean(&layer.layer.id),
-                Style::default().fg(theme.muted),
+                Style::default().fg(theme.color(ColorRole::Muted)),
             )),
             Line::default(),
         ];
@@ -617,7 +591,8 @@ fn draw_command(frame: &mut Frame<'_>, app: &mut App<'_>, theme: &Theme, area: R
     } else {
         vec![Line::from("No filesystem history.")]
     };
-    let mut paragraph = Paragraph::new(lines).style(Style::default().fg(theme.text));
+    let mut paragraph =
+        Paragraph::new(lines).style(Style::default().fg(theme.color(ColorRole::Text)));
     if app.wrap {
         paragraph = paragraph.wrap(Wrap { trim: false });
     }
@@ -638,24 +613,30 @@ fn draw_details(frame: &mut Frame<'_>, app: &App<'_>, theme: &Theme, area: Rect)
         frame.render_widget(
             Paragraph::new("Select a file to compare metadata.")
                 .block(block)
-                .style(Style::default().fg(theme.muted)),
+                .style(Style::default().fg(theme.color(ColorRole::Muted))),
             area,
         );
         return;
     };
     let mut lines = vec![Line::from(Span::styled(
         clean(&node.path),
-        Style::default().fg(theme.accent),
+        Style::default().fg(theme.color(ColorRole::Accent)),
     ))];
     if node.before.is_none() && node.after.is_none() {
         lines.push(Line::from("Directory inferred from its children."));
     } else {
         lines.push(Line::from(vec![
-            Span::styled(" Before  ", Style::default().fg(theme.muted)),
+            Span::styled(
+                " Before  ",
+                Style::default().fg(theme.color(ColorRole::Muted)),
+            ),
             Span::raw(metadata(node.before.as_deref())),
         ]));
         lines.push(Line::from(vec![
-            Span::styled(" After   ", Style::default().fg(theme.muted)),
+            Span::styled(
+                " After   ",
+                Style::default().fg(theme.color(ColorRole::Muted)),
+            ),
             Span::raw(metadata(node.after.as_deref())),
         ]));
         if let Some(entry) = node.entry() {
@@ -668,7 +649,7 @@ fn draw_details(frame: &mut Frame<'_>, app: &App<'_>, theme: &Theme, area: Rect)
                         .map(|index| (index + 1).to_string())
                         .unwrap_or_else(|| "—".into())
                 ),
-                Style::default().fg(theme.muted),
+                Style::default().fg(theme.color(ColorRole::Muted)),
             )));
         }
     }
@@ -676,7 +657,7 @@ fn draw_details(frame: &mut Frame<'_>, app: &App<'_>, theme: &Theme, area: Rect)
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
             .block(block)
-            .style(Style::default().fg(theme.text)),
+            .style(Style::default().fg(theme.color(ColorRole::Text))),
         area,
     );
 }
@@ -708,9 +689,9 @@ fn draw_status(frame: &mut Frame<'_>, app: &App<'_>, theme: &Theme, area: Rect) 
         if app.filter_edit { "▏" } else { "" }
     );
     let color = if app.filter_error.is_some() {
-        theme.removed
+        theme.color(ColorRole::Removed)
     } else {
-        theme.accent
+        theme.color(ColorRole::Accent)
     };
     frame.render_widget(Paragraph::new(text).style(Style::default().fg(color)), area);
 }
@@ -753,7 +734,7 @@ fn draw_help(frame: &mut Frame<'_>, theme: &Theme, area: Rect) {
         Paragraph::new(lines.into_iter().map(Line::from).collect::<Vec<_>>())
             .block(panel(" Keyboard & mouse ", true, theme))
             .wrap(Wrap { trim: false })
-            .style(Style::default().fg(theme.text)),
+            .style(Style::default().fg(theme.color(ColorRole::Text))),
         rect,
     );
 }

@@ -6,34 +6,29 @@ use anstream::ColorChoice;
 use unicode_width::UnicodeWidthChar;
 
 use super::history;
-use crate::oci::{Analysis, Change, ChangeKind, LayerAnalysis};
+use crate::{
+    colors::{ColorRole, Colors},
+    oci::{Analysis, Change, ChangeKind, LayerAnalysis},
+};
 
 pub(super) fn color_choice() -> ColorChoice {
-    let plain = !io::stdout().is_terminal()
-        || std::env::var_os("CI").is_some()
-        || std::env::var_os("NO_COLOR").is_some()
-        || std::env::var_os("TERM").is_some_and(|term| term == "dumb");
-
-    if plain {
-        ColorChoice::Never
-    } else {
-        ColorChoice::Auto
-    }
+    Colors::detect(io::stdout().is_terminal()).color_choice()
 }
 
-pub(super) fn analysis(analysis: &Analysis, output: &mut impl Write) -> io::Result<()> {
+pub(super) fn analysis(
+    analysis: &Analysis,
+    output: &mut impl Write,
+    colors: Colors,
+) -> io::Result<()> {
     let width = terminal_width();
 
-    writeln!(
-        output,
-        "\x1b[1;36mImage:\x1b[0m {}",
-        analysis.image.reference.escape_debug()
-    )?;
+    write_styled(output, colors, ColorRole::Accent, "Image:", true)?;
+    writeln!(output, " {}", analysis.image.reference.escape_debug())?;
     writeln!(output, "Layers: {}", analysis.layers.len())?;
     writeln!(output, "Visible paths: {}", analysis.filesystem.len())?;
 
     for layer in &analysis.layers {
-        layer_output(layer, analysis.layers.len(), output, width)?;
+        layer_output(layer, analysis.layers.len(), output, width, colors)?;
     }
 
     Ok(())
@@ -56,28 +51,39 @@ fn layer_output(
     total: usize,
     output: &mut impl Write,
     width: usize,
+    colors: Colors,
 ) -> io::Result<()> {
-    writeln!(
+    writeln!(output)?;
+    write_styled(
         output,
-        "\n\x1b[1;36mLayer {}/{}\x1b[0m",
-        layer.layer.index + 1,
-        total
+        colors,
+        ColorRole::Accent,
+        &format!("Layer {}/{}", layer.layer.index + 1, total),
+        true,
     )?;
+    writeln!(output)?;
     command(&layer.layer.command, output, width)?;
 
     if layer.changes.is_empty() {
-        writeln!(output, "  \x1b[2mNo filesystem changes.\x1b[0m")?;
+        write_styled(
+            output,
+            colors,
+            ColorRole::Muted,
+            "  No filesystem changes.",
+            false,
+        )?;
+        writeln!(output)?;
         return Ok(());
     }
 
-    change_groups(&layer.changes, output)
+    change_groups(&layer.changes, output, colors)
 }
 
-fn change_groups(changes: &[Change], output: &mut impl Write) -> io::Result<()> {
-    for (kind, label, marker, color) in [
-        (ChangeKind::Added, "Added", '+', 32),
-        (ChangeKind::Modified, "Modified", '~', 33),
-        (ChangeKind::Removed, "Deleted", '-', 31),
+fn change_groups(changes: &[Change], output: &mut impl Write, colors: Colors) -> io::Result<()> {
+    for (kind, label, marker, role) in [
+        (ChangeKind::Added, "Added", '+', ColorRole::Added),
+        (ChangeKind::Modified, "Modified", '~', ColorRole::Modified),
+        (ChangeKind::Removed, "Deleted", '-', ColorRole::Removed),
     ] {
         let entries = changes.iter().filter(|change| change.kind == kind);
         let count = entries.clone().count();
@@ -86,17 +92,34 @@ fn change_groups(changes: &[Change], output: &mut impl Write) -> io::Result<()> 
             continue;
         }
 
-        writeln!(output, "\n  \x1b[1;{color}m{label} ({count})\x1b[0m")?;
+        write!(output, "\n  ")?;
+        write_styled(output, colors, role, &format!("{label} ({count})"), true)?;
+        writeln!(output)?;
         for change in entries {
-            writeln!(
-                output,
-                "    \x1b[{color}m{marker}\x1b[0m {}",
-                change.path.escape_debug()
-            )?;
+            write!(output, "    ")?;
+            write_styled(output, colors, role, &marker.to_string(), false)?;
+            writeln!(output, " {}", change.path.escape_debug())?;
         }
     }
 
     Ok(())
+}
+
+fn write_styled(
+    output: &mut impl Write,
+    colors: Colors,
+    role: ColorRole,
+    text: &str,
+    bold: bool,
+) -> io::Result<()> {
+    let style = colors.ansi(role);
+    let style = if bold && colors.is_enabled() {
+        style.bold()
+    } else {
+        style
+    };
+
+    write!(output, "{style}{text}{style:#}")
 }
 
 fn command(command: &str, output: &mut impl Write, width: usize) -> io::Result<()> {
