@@ -107,6 +107,22 @@ pub enum Shell {
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
 
+    if !matches!(
+        cli.command,
+        Some(Command::Version | Command::Completion { .. })
+    ) {
+        match crate::updater::check_and_update() {
+            Ok(Some(version)) => {
+                eprintln!(
+                    "Updated Peek to {version}. Run the command again to start the new version."
+                );
+                return Ok(());
+            }
+            Ok(None) => {}
+            Err(error) => eprintln!("peek: update check failed: {error:#}"),
+        }
+    }
+
     match &cli.command {
         Some(Command::Analyze(options)) => commands::analyze(options),
         Some(Command::Version) => commands::version(),
