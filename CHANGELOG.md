@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0](https://github.com/sousandrei/peek/compare/v0.2.0...v0.3.0) (2026-10-12)
+
+
+### Features
+
+* add self update ([7c1f64a](https://github.com/sousandrei/peek/commit/7c1f64a5f153bc1d721251f6b54754f5be3f0901))
+
+
+### Bug Fixes
+
+* better color system ([c3c2a9d](https://github.com/sousandrei/peek/commit/c3c2a9d102709e208112edeab25607c212437c8a))
+* **tui:** exit immediately when image loading is cancelled ([49beb3f](https://github.com/sousandrei/peek/commit/49beb3f3309f14242d30451138b746faa3ac6cef))
+
 ## [0.2.0](https://github.com/sousandrei/peek/compare/v0.1.0...v0.2.0) (2026-10-10)
 
 
