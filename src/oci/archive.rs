@@ -7,11 +7,11 @@ use anyhow::{Context, Result, bail, ensure};
 use rayon::prelude::*;
 use serde::Deserialize;
 
-use super::Platform;
 use super::digest::{HashingReader, hash_reader};
-use super::input::ArchiveInput;
+use super::input::{ArchiveInput, Cancellable};
 use super::layer::read_layer;
 use super::model::{Image, ImageMetadata, Layer};
+use super::{LoadProgress, Platform};
 
 #[derive(Clone)]
 struct Blob {
@@ -89,6 +89,21 @@ pub fn read<R: ArchiveInput>(
     reader: &mut R,
     reference: &str,
     platform: Option<&Platform>,
+    progress: Option<&LoadProgress>,
+) -> Result<Image> {
+    read_image(
+        &mut Cancellable::new(reader, progress),
+        reference,
+        platform,
+        progress,
+    )
+}
+
+fn read_image<R: ArchiveInput>(
+    reader: &mut R,
+    reference: &str,
+    platform: Option<&Platform>,
+    progress: Option<&LoadProgress>,
 ) -> Result<Image> {
     let blobs = index_archive(reader)?;
     let ManifestData {
@@ -120,6 +135,7 @@ pub fn read<R: ArchiveInput>(
             source,
             config.rootfs.diff_ids.get(index),
             commands.get(index),
+            progress,
         )
     };
 
@@ -163,6 +179,7 @@ fn parse_layer<R: ArchiveInput>(
     source: LayerSource,
     expected_diff_id: Option<&String>,
     command: Option<&String>,
+    progress: Option<&LoadProgress>,
 ) -> Result<Layer> {
     let blob = resolve_blob(blobs, &source.path)?;
     let input = reader.range(blob.offset, blob.size)?;
@@ -173,7 +190,7 @@ fn parse_layer<R: ArchiveInput>(
             descriptor.digest
         );
         let mut input = HashingReader::new(input);
-        let parsed = read_layer(&mut input, index, Some(&descriptor.media_type));
+        let parsed = read_layer(&mut input, index, Some(&descriptor.media_type), progress);
 
         // Verify stored bytes while decoding, including unread bytes after a parse error.
         std::io::copy(&mut input, &mut std::io::sink())?;
@@ -184,7 +201,7 @@ fn parse_layer<R: ArchiveInput>(
         );
         parsed
     } else {
-        read_layer(input, index, None)
+        read_layer(input, index, None, progress)
     }
     .with_context(|| format!("cannot parse layer {index} ({})", source.path))?;
 

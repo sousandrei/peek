@@ -152,8 +152,13 @@ fn save(
     );
 
     progress::report(progress, "Decoding image layers")?;
-    archive::read(&mut Cursor::new(output.stdout), reference, Some(platform))
-        .with_context(|| format!("cannot read archive returned by {engine}"))
+    archive::read(
+        &mut Cursor::new(output.stdout),
+        reference,
+        Some(platform),
+        progress,
+    )
+    .with_context(|| format!("cannot read archive returned by {engine}"))
 }
 
 // Drain both pipes concurrently so large exports cannot block the child. The
@@ -171,11 +176,14 @@ fn command_output(command: &mut Command, progress: Option<&LoadProgress>) -> Res
         .stderr(Stdio::piped())
         .spawn()
         .context("cannot start image engine command")?;
-    let stdout = child.stdout.take().context("missing engine stdout pipe")?;
-    let stderr = child.stderr.take().context("missing engine stderr pipe")?;
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
     progress
         .set_child(child)
         .context("cannot register image engine command")?;
+    let _guard = ChildGuard(progress);
+    let stdout = stdout.context("missing engine stdout pipe")?;
+    let stderr = stderr.context("missing engine stderr pipe")?;
 
     thread::scope(|scope| {
         let stdout = scope.spawn(|| read_pipe(stdout));
@@ -203,7 +211,6 @@ fn command_output(command: &mut Command, progress: Option<&LoadProgress>) -> Res
         let stderr = stderr
             .join()
             .map_err(|_| anyhow::anyhow!("engine stderr reader panicked"))??;
-        progress.clear_child();
         ensure!(!progress.is_cancelled(), "image loading cancelled");
         Ok(Output {
             status: status?,
@@ -211,6 +218,14 @@ fn command_output(command: &mut Command, progress: Option<&LoadProgress>) -> Res
             stderr,
         })
     })
+}
+
+struct ChildGuard<'a>(&'a LoadProgress);
+
+impl Drop for ChildGuard<'_> {
+    fn drop(&mut self) {
+        self.0.clear_child();
+    }
 }
 
 fn read_pipe(mut pipe: impl Read) -> io::Result<Vec<u8>> {
@@ -248,23 +263,48 @@ mod tests {
         assert_eq!(output.stdout, b"archive");
         assert_eq!(output.stderr, b"failure");
         assert_eq!(output.status.code(), Some(7));
+        assert!(progress.try_wait_child().unwrap().is_none());
     }
 
     #[test]
     fn cancelling_an_engine_command_kills_and_reaps_it() {
         let (sender, _) = mpsc::channel();
         let progress = LoadProgress::new(sender);
+        let directory = tempfile::tempdir().unwrap();
+        let ready = directory.path().join("ready");
         thread::scope(|scope| {
-            scope.spawn(|| {
-                thread::sleep(Duration::from_millis(50));
-                progress.cancel();
+            let worker = scope.spawn(|| {
+                let mut command = Command::new("sh");
+                command.args(["-c", "printf '%s' \"$$\" > \"$1\"; exec sleep 10", "sh"]);
+                command.arg(&ready);
+                command_output(&mut command, Some(&progress))
             });
-            let mut command = Command::new("sleep");
-            command.arg("10");
             let started = std::time::Instant::now();
-            let error = command_output(&mut command, Some(&progress)).unwrap_err();
+            let pid = loop {
+                if let Ok(pid) = std::fs::read_to_string(&ready)
+                    && let Ok(pid) = pid.parse::<u32>()
+                {
+                    break pid;
+                }
+                if started.elapsed() > Duration::from_secs(5) {
+                    progress.cancel();
+                    panic!("engine command did not signal readiness");
+                }
+                thread::sleep(Duration::from_millis(5));
+            };
+            progress.cancel();
+            let error = worker.join().unwrap().unwrap_err();
             assert!(error.to_string().contains("cancelled"));
             assert!(started.elapsed() < Duration::from_secs(5));
+            assert!(progress.try_wait_child().unwrap().is_none());
+            assert!(
+                !Command::new("kill")
+                    .args(["-0", &pid.to_string()])
+                    .stderr(Stdio::null())
+                    .status()
+                    .unwrap()
+                    .success()
+            );
         });
     }
 }

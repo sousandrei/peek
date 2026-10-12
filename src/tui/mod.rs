@@ -28,7 +28,11 @@ pub fn run(reference: &str, source: Source, platform: Option<&Platform>) -> Resu
 
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic| {
-        let _ = execute!(io::stdout(), DisableMouseCapture);
+        let _ = execute!(
+            io::stdout(),
+            DisableMouseCapture,
+            ratatui::crossterm::cursor::Show
+        );
         previous(panic);
     }));
 

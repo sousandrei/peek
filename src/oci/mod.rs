@@ -66,7 +66,7 @@ fn load_image(
             progress::report(progress, "Reading image archive")?;
             let mut file = File::open(reference)
                 .with_context(|| format!("cannot open image archive {reference:?}"))?;
-            archive::read(&mut file, reference, platform)
+            archive::read(&mut file, reference, platform, progress)
                 .with_context(|| format!("cannot read image archive {reference:?}"))
         }
         Source::Docker | Source::Podman => {
@@ -81,5 +81,5 @@ fn load_image(
 
 #[cfg(test)]
 pub fn archive_for_test(bytes: &[u8]) -> Result<Image> {
-    archive::read(&mut Cursor::new(bytes), "fixture", None)
+    archive::read(&mut Cursor::new(bytes), "fixture", None, None)
 }

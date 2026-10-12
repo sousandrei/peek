@@ -30,8 +30,13 @@ impl LoadProgress {
     }
 
     pub fn report(&self, stage: &'static str) -> Result<()> {
-        ensure!(!self.is_cancelled(), "image loading cancelled");
+        self.check_cancelled()?;
         let _ = self.updates.send(stage);
+        Ok(())
+    }
+
+    pub(super) fn check_cancelled(&self) -> Result<()> {
+        ensure!(!self.is_cancelled(), "image loading cancelled");
         Ok(())
     }
 
@@ -44,14 +49,18 @@ impl LoadProgress {
         }
     }
 
-    pub(super) fn set_child(&self, child: Child) -> Result<()> {
-        let mut active = self
-            .child
-            .lock()
-            .map_err(|_| anyhow::anyhow!("image child lock poisoned"))?;
+    pub(super) fn set_child(&self, mut child: Child) -> Result<()> {
+        let mut active = match self.child.lock() {
+            Ok(active) => active,
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(anyhow::anyhow!("image child lock poisoned"));
+            }
+        };
         if self.is_cancelled() {
-            let mut child = child;
             let _ = child.kill();
+            let _ = child.wait();
             return Err(anyhow::anyhow!("image loading cancelled"));
         }
         *active = Some(child);
@@ -93,10 +102,20 @@ impl LoadProgress {
     }
 
     pub(super) fn clear_child(&self) {
-        if let Ok(mut active) = self.child.lock() {
-            active.take();
+        if let Ok(mut active) = self.child.lock()
+            && let Some(mut child) = active.take()
+        {
+            let _ = child.kill();
+            let _ = child.wait();
         }
     }
+}
+
+pub(super) fn check(progress: Option<&LoadProgress>) -> Result<()> {
+    if let Some(progress) = progress {
+        progress.check_cancelled()?;
+    }
+    Ok(())
 }
 
 pub(super) fn report(progress: Option<&LoadProgress>, stage: &'static str) -> Result<()> {
@@ -130,6 +149,58 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("cancelled")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancellation_before_child_registration_kills_and_reaps_the_child() {
+        let (sender, _) = mpsc::channel();
+        let progress = LoadProgress::new(sender);
+        let child = std::process::Command::new("sleep")
+            .arg("10")
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        progress.cancel();
+        assert!(
+            progress
+                .set_child(child)
+                .unwrap_err()
+                .to_string()
+                .contains("cancelled")
+        );
+        assert!(progress.child.lock().unwrap().is_none());
+        assert!(
+            !std::process::Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .stderr(std::process::Stdio::null())
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clearing_an_active_child_kills_and_reaps_it() {
+        let (sender, _) = mpsc::channel();
+        let progress = LoadProgress::new(sender);
+        let child = std::process::Command::new("sleep")
+            .arg("10")
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        progress.set_child(child).unwrap();
+        progress.clear_child();
+        assert!(progress.child.lock().unwrap().is_none());
+        assert!(
+            !std::process::Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .stderr(std::process::Stdio::null())
+                .status()
+                .unwrap()
+                .success()
         );
     }
 }

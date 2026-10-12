@@ -50,18 +50,18 @@ pub fn load(
         Ok(cancelled) => cancelled,
         Err(error) => {
             progress.cancel();
-            drop(worker);
+            let _ = worker.join();
             return Err(error);
         }
     };
-    if cancelled {
-        drop(worker);
-        return Ok(None);
-    }
     let analysis = worker
         .join()
         .map_err(|_| anyhow::anyhow!("image loader panicked"))?;
-    analysis.map(Some)
+    if cancelled {
+        Ok(None)
+    } else {
+        analysis.map(Some)
+    }
 }
 
 fn wait_for_image(
@@ -98,8 +98,7 @@ fn wait_for_image(
                     && key.modifiers.contains(KeyModifiers::CONTROL)))
         {
             progress.cancel();
-            return Ok(true);
         }
     }
-    Ok(false)
+    Ok(progress.is_cancelled())
 }

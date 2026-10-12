@@ -6,8 +6,10 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, bail, ensure};
 
+use super::LoadProgress;
 use super::archive::normalize_path;
 use super::digest::{HashingReader, hash_reader};
+use super::input::Cancellable;
 use super::model::{FileEntry, FileKind};
 
 pub struct ParsedLayer {
@@ -19,8 +21,9 @@ pub fn read_layer<R: Read>(
     reader: R,
     layer_index: usize,
     media_type: Option<&str>,
+    progress: Option<&LoadProgress>,
 ) -> Result<ParsedLayer> {
-    let mut reader = BufReader::new(reader);
+    let mut reader = BufReader::new(Cancellable::new(reader, progress));
     let prefix = reader.fill_buf()?;
     let gzip = prefix.starts_with(&[0x1f, 0x8b]);
     let zstd = prefix.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]);
@@ -48,7 +51,7 @@ pub fn read_layer<R: Read>(
         Box::new(reader)
     };
 
-    let mut decoded = HashingReader::new(decoded);
+    let mut decoded = HashingReader::new(Cancellable::new(decoded, progress));
     let entries = read_entries(&mut decoded, layer_index)?;
 
     // Read trailing bytes too: compression checksums and OCI DiffID cover the complete stream.
@@ -173,4 +176,63 @@ fn read_entry<R: Read>(
         layer_index,
         content_layer_index: (kind == FileKind::File).then_some(layer_index),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+    use std::sync::mpsc;
+
+    struct CancelOnRead<'a> {
+        bytes: Cursor<Vec<u8>>,
+        progress: &'a LoadProgress,
+        cancel_at: u64,
+    }
+
+    impl Read for CancelOnRead<'_> {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if self.bytes.position() < self.cancel_at {
+                let length = buffer
+                    .len()
+                    .min((self.cancel_at - self.bytes.position()) as usize);
+                return self.bytes.read(&mut buffer[..length]);
+            }
+            let count = self.bytes.read(buffer)?;
+            self.progress.cancel();
+            Ok(count)
+        }
+    }
+
+    #[test]
+    fn cancellation_interrupts_buffered_decompression_and_trailing_data() {
+        for trailing in [false, true] {
+            let (sender, _) = mpsc::channel();
+            let progress = LoadProgress::new(sender);
+            let mut encoded = Vec::new();
+            let mut first =
+                flate2::read::GzEncoder::new(&[0_u8; 1024][..], flate2::Compression::default());
+            first.read_to_end(&mut encoded).unwrap();
+            let boundary = encoded.len() as u64;
+            let mut second =
+                flate2::read::GzEncoder::new(&b"trailing data"[..], flate2::Compression::default());
+            second.read_to_end(&mut encoded).unwrap();
+            let reader = CancelOnRead {
+                bytes: Cursor::new(encoded),
+                progress: &progress,
+                // Either cancel with compressed bytes already buffered, or
+                // when draining the member after the tar terminator.
+                cancel_at: if trailing { boundary } else { 0 },
+            };
+            let error = read_layer(
+                reader,
+                0,
+                Some("application/vnd.oci.image.layer.v1.tar+gzip"),
+                Some(&progress),
+            )
+            .err()
+            .unwrap();
+            assert!(format!("{error:#}").contains("cancelled"));
+        }
+    }
 }
