@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1](https://github.com/sousandrei/peek/compare/v0.3.0...v0.3.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* cancel image loading safely and restore terminal state on panic ([cbcd2b2](https://github.com/sousandrei/peek/commit/cbcd2b2c5472a5f37fb53f96ccc2cb9bd9482268))
+* limit update checks to interactive inspection and require SHA-256 verification ([514c480](https://github.com/sousandrei/peek/commit/514c48088550516355c182089d6832c97b2e7474))
+
 ## [0.3.0](https://github.com/sousandrei/peek/compare/v0.2.0...v0.3.0) (2026-10-12)
 
 
