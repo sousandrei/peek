@@ -72,11 +72,6 @@ fn json_output(analysis: &oci::Analysis, options: &AnalyzeOptions) -> Result<()>
     }
 }
 
-pub(super) fn version() -> Result<()> {
-    println!("peek {}", env!("CARGO_PKG_VERSION"));
-    Ok(())
-}
-
 pub(super) fn completion(_shell: Shell) -> Result<()> {
     Ok(())
 }

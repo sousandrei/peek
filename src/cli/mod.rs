@@ -11,6 +11,8 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 #[command(
     version,
     about = "Container image filesystem explorer and analyzer",
+    version = env!("CARGO_PKG_VERSION"),
+    help_template = "{before-help}{name} {version}\n{about-with-newline}{usage-heading} {usage}\n\n{all-args}{after-help}",
     color = match output::color_choice() {
         anstream::ColorChoice::Never => clap::ColorChoice::Never,
         _ => clap::ColorChoice::Auto,
@@ -26,9 +28,9 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
 
-    /// Print version
-    #[arg(short = 'v', long, action = clap::ArgAction::Version)]
-    pub version: Option<bool>,
+    /// Print version number
+    #[arg(short = 'V', long, action = clap::ArgAction::SetTrue)]
+    pub version: bool,
 }
 
 #[derive(Debug, Args)]
@@ -73,9 +75,6 @@ pub enum Command {
     /// Show file changes between image layers without opening the TUI
     #[command(visible_alias = "a")]
     Analyze(AnalyzeOptions),
-    /// Print the application version
-    #[command(visible_alias = "v")]
-    Version,
     /// Generate shell completion scripts (placeholder)
     Completion {
         #[arg(value_enum)]
@@ -105,12 +104,29 @@ pub enum Shell {
 }
 
 pub fn run() -> Result<()> {
+    let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
+
+    if arguments.is_empty() {
+        print_usage_hint();
+        return Ok(());
+    }
+
+    if arguments
+        .iter()
+        .any(|argument| argument == "--version" || argument == "-V")
+    {
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     let cli = Cli::parse();
 
-    if !matches!(
-        cli.command,
-        Some(Command::Version | Command::Completion { .. })
-    ) {
+    if cli.version {
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
+    if !matches!(cli.command, Some(Command::Completion { .. })) {
         match crate::updater::check_and_update() {
             Ok(Some(version)) => {
                 eprintln!(
@@ -125,8 +141,13 @@ pub fn run() -> Result<()> {
 
     match &cli.command {
         Some(Command::Analyze(options)) => commands::analyze(options),
-        Some(Command::Version) => commands::version(),
         Some(Command::Completion { shell }) => commands::completion(*shell),
         None => commands::inspect(&cli.options),
     }
+}
+
+fn print_usage_hint() {
+    println!(
+        "Pass an image name to open the explorer, or use `peek analyze IMAGE` to print layer changes. Run `peek --help` for all options."
+    );
 }
