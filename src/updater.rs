@@ -12,7 +12,14 @@ use sha2::{Digest, Sha256};
 const REPOSITORY_OWNER: &str = "sousandrei";
 const REPOSITORY_NAME: &str = "peek";
 
-pub fn check_and_update() -> Result<Option<String>> {
+pub struct AvailableUpdate {
+    pub version: String,
+    url: String,
+    digest: Option<String>,
+    asset_name: &'static str,
+}
+
+pub fn check_for_update() -> Result<Option<AvailableUpdate>> {
     if cfg!(debug_assertions) {
         return Ok(None);
     }
@@ -46,9 +53,16 @@ pub fn check_and_update() -> Result<Option<String>> {
             )
         })?;
 
-    replace_from_asset(asset.download_url(), asset.digest(), asset_name)?;
+    Ok(Some(AvailableUpdate {
+        version: release.version().to_owned(),
+        url: asset.download_url().to_owned(),
+        digest: asset.digest().map(str::to_owned),
+        asset_name,
+    }))
+}
 
-    Ok(Some(release.version().to_owned()))
+pub fn install(update: &AvailableUpdate) -> Result<()> {
+    replace_from_asset(&update.url, update.digest.as_deref(), update.asset_name)
 }
 
 fn replace_from_asset(url: &str, digest: Option<&str>, asset_name: &str) -> Result<()> {

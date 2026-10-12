@@ -3,7 +3,10 @@ pub(crate) mod history;
 mod output;
 
 use anyhow::Result;
-use std::path::PathBuf;
+use std::{
+    io::{self, IsTerminal, Write},
+    path::PathBuf,
+};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
@@ -127,12 +130,28 @@ pub fn run() -> Result<()> {
     }
 
     if !matches!(cli.command, Some(Command::Completion { .. })) {
-        match crate::updater::check_and_update() {
-            Ok(Some(version)) => {
-                eprintln!(
-                    "Updated Peek to {version}. Run the command again to start the new version."
-                );
-                return Ok(());
+        match crate::updater::check_for_update() {
+            Ok(Some(update)) => {
+                let confirmed = match confirm_update(&update.version) {
+                    Ok(confirmed) => confirmed,
+                    Err(error) => {
+                        eprintln!("peek: cannot read update confirmation: {error:#}");
+                        false
+                    }
+                };
+
+                if confirmed {
+                    match crate::updater::install(&update) {
+                        Ok(()) => {
+                            eprintln!(
+                                "Updated Peek to {}. Run the command again to start the new version.",
+                                update.version
+                            );
+                            return Ok(());
+                        }
+                        Err(error) => eprintln!("peek: update failed: {error:#}"),
+                    }
+                }
             }
             Ok(None) => {}
             Err(error) => eprintln!("peek: update check failed: {error:#}"),
@@ -150,4 +169,37 @@ fn print_usage_hint() {
     println!(
         "Pass an image name to open the explorer, or use `peek analyze IMAGE` to print layer changes. Run `peek --help` for all options."
     );
+}
+
+fn confirm_update(version: &str) -> Result<bool> {
+    if !io::stdin().is_terminal() {
+        eprintln!("peek: version {version} is available; run Peek in a terminal to update.");
+        return Ok(false);
+    }
+
+    eprint!("Peek {version} is available. Install it now? [y/N] ");
+    io::stderr().flush()?;
+
+    let mut answer = String::new();
+    io::stdin().read_line(&mut answer)?;
+
+    Ok(accepts_update(&answer))
+}
+
+fn accepts_update(answer: &str) -> bool {
+    matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::accepts_update;
+
+    #[test]
+    fn update_prompt_only_accepts_explicit_yes() {
+        assert!(accepts_update("y"));
+        assert!(accepts_update(" YES \n"));
+        assert!(!accepts_update(""));
+        assert!(!accepts_update("n"));
+        assert!(!accepts_update("no"));
+    }
 }
