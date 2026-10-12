@@ -5,10 +5,10 @@ use std::io::{self, IsTerminal, Write};
 use anstream::ColorChoice;
 use unicode_width::UnicodeWidthChar;
 
-use super::history;
 use crate::{
     colors::{ColorRole, Colors},
     oci::{Analysis, Change, ChangeKind, LayerAnalysis},
+    presentation,
 };
 
 pub(super) fn color_choice() -> ColorChoice {
@@ -126,7 +126,7 @@ fn command(command: &str, output: &mut impl Write, width: usize) -> io::Result<(
     writeln!(output, "  Command:")?;
     let width = width.saturating_sub(4).max(1);
 
-    let command = history::layout(command);
+    let command = presentation::history_layout(command);
 
     for line in command.lines() {
         let line: String = line

@@ -7,18 +7,18 @@ use regex::{Regex, RegexBuilder};
 
 use crate::oci::Analysis;
 
-use super::tree::{SortOrder, Tree, parent};
+use super::tree::{Category, SortOrder, Tree, parent};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Focus {
+pub(super) enum Focus {
     Layers,
     Files,
     Command,
 }
 
 #[derive(Clone, Copy)]
-pub enum Action {
-    Category(usize),
+pub(super) enum Action {
+    Category(Category),
     Compare,
     Sort,
     Attributes,
@@ -26,14 +26,14 @@ pub enum Action {
 }
 
 #[derive(Default)]
-pub struct Areas {
+pub(super) struct Areas {
     pub layers: Rect,
     pub files: Rect,
     pub command: Rect,
     pub buttons: Vec<(Rect, Action)>,
 }
 
-pub struct App<'a> {
+pub(super) struct App<'a> {
     pub analysis: &'a Analysis,
     pub layer: usize,
     pub focus: Focus,
@@ -267,7 +267,8 @@ impl<'a> App<'a> {
 
     pub fn action(&mut self, action: Action) {
         match action {
-            Action::Category(index) => {
+            Action::Category(category) => {
+                let index = category.index();
                 self.categories[index] = !self.categories[index];
                 self.refresh();
             }

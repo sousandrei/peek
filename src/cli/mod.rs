@@ -1,5 +1,4 @@
 mod commands;
-pub(crate) mod history;
 mod output;
 
 use anyhow::Result;
@@ -106,7 +105,7 @@ pub enum Shell {
     Zsh,
 }
 
-pub fn run() -> Result<()> {
+pub(crate) fn run() -> Result<()> {
     let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
 
     if arguments.is_empty() {

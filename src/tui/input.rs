@@ -6,8 +6,9 @@ use ratatui::crossterm::event::{
 use ratatui::layout::Position;
 
 use super::state::{Action, App, Focus};
+use super::tree::Category;
 
-pub fn handle(app: &mut App<'_>, event: Event) {
+pub(super) fn handle(app: &mut App<'_>, event: Event) {
     match event {
         Event::Key(key) if key.kind != KeyEventKind::Release => keyboard(app, key),
         Event::Mouse(mouse) => mouse_event(app, mouse),
@@ -61,10 +62,10 @@ fn keyboard(app: &mut App<'_>, key: KeyEvent) {
         KeyCode::Left | KeyCode::Char('h') if app.focus == Focus::Files => app.tree_left(),
         KeyCode::Right | KeyCode::Char('l') if app.focus == Focus::Files => app.tree_right(),
         KeyCode::Char('z') => app.fold_all(),
-        KeyCode::Char('a') => app.action(Action::Category(0)),
-        KeyCode::Char('m') => app.action(Action::Category(1)),
-        KeyCode::Char('d') => app.action(Action::Category(2)),
-        KeyCode::Char('u') => app.action(Action::Category(3)),
+        KeyCode::Char('a') => app.action(Action::Category(Category::Added)),
+        KeyCode::Char('m') => app.action(Action::Category(Category::Modified)),
+        KeyCode::Char('d') => app.action(Action::Category(Category::Removed)),
+        KeyCode::Char('u') => app.action(Action::Category(Category::Unchanged)),
         KeyCode::Char('c') => app.action(Action::Compare),
         KeyCode::Char('s') => app.action(Action::Sort),
         KeyCode::Char('b') => app.action(Action::Attributes),

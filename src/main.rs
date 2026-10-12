@@ -2,6 +2,7 @@ mod cli;
 mod colors;
 mod export;
 mod oci;
+mod presentation;
 mod tui;
 mod updater;
 

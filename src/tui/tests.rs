@@ -100,7 +100,7 @@ fn filtering_and_collapse_preserve_a_valid_selection() {
     assert_eq!(app.selected_path(), Some("/etc"));
     app.fold_selected();
     assert!(app.visible.contains(&"/etc/app.conf".into()));
-    app.action(Action::Category(Category::Unchanged.index()));
+    app.action(Action::Category(Category::Unchanged));
     assert!(!app.visible.contains(&"/etc/keep".into()));
     assert!(
         app.files
@@ -253,7 +253,7 @@ fn controls_live_in_footer_without_top_tabs_or_vim_vertical_keys() {
         .areas
         .buttons
         .iter()
-        .find(|(_, action)| matches!(action, Action::Category(0)))
+        .find(|(_, action)| matches!(action, Action::Category(Category::Added)))
         .unwrap()
         .0;
     input::handle(
@@ -567,5 +567,37 @@ fn loading_shortcut_keys_are_bold_and_quit_label_is_not() {
     }
     for x in [16, 22, 23, 24, 25] {
         assert!(!buffer[(x, 9)].modifier.contains(Modifier::BOLD));
+    }
+}
+
+#[test]
+fn category_shortcuts_and_footer_clicks_toggle_the_same_typed_category() {
+    let analysis = fixture();
+    for (shortcut, category) in [
+        ('a', Category::Added),
+        ('m', Category::Modified),
+        ('d', Category::Removed),
+        ('u', Category::Unchanged),
+    ] {
+        let mut app = App::new(&analysis);
+        key(&mut app, KeyCode::Char(shortcut));
+        let mut expected = [true; 4];
+        expected[category.index()] = false;
+        assert_eq!(app.categories, expected);
+
+        render(&mut app, 120, 36);
+        let point = app.areas.buttons.iter().find(|(_, action)| {
+            matches!(action, Action::Category(button_category) if *button_category == category)
+        }).unwrap().0;
+        input::handle(
+            &mut app,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: point.x,
+                row: point.y,
+                modifiers: KeyModifiers::NONE,
+            }),
+        );
+        assert_eq!(app.categories, [true; 4]);
     }
 }

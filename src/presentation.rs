@@ -3,7 +3,7 @@
 use std::iter::Peekable;
 use std::str::Chars;
 
-pub(crate) fn layout(command: &str) -> String {
+pub(crate) fn history_layout(command: &str) -> String {
     // A heredoc body can contain arbitrary text; leave its layout intact.
     if command.contains("<<") {
         return command.to_owned();
@@ -144,6 +144,53 @@ impl Formatter<'_> {
     fn copy_next(&mut self) {
         if let Some(character) = self.characters.next() {
             self.formatted.push(character);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::history_layout;
+
+    #[test]
+    fn history_layout_preserves_shell_literals_and_breaks_only_top_level_statements() {
+        for (input, expected) in [
+            ("RUN  echo  hi; echo done", "RUN echo hi;\necho done"),
+            (
+                r#"echo "a;  b" && printf '%s' "猫""#,
+                "echo \"a;  b\" &&\nprintf '%s' \"猫\"",
+            ),
+            (
+                r#"echo "$(printf 'a; b')" || echo ${value}"#,
+                "echo \"$(printf 'a; b')\" ||\necho ${value}",
+            ),
+            (r"echo a\;b; echo done", "echo a\\;b;\necho done"),
+            (
+                "echo hi # keep ; && comment\necho done",
+                "echo hi # keep ; && comment\necho done",
+            ),
+            (
+                "echo `printf 'a; b'` && echo done",
+                "echo `printf 'a; b'` &&\necho done",
+            ),
+            (
+                "case x in x) echo hi;; y) echo y;;& esac",
+                "case x in x) echo hi;;\ny) echo y;;&\nesac",
+            ),
+        ] {
+            assert_eq!(history_layout(input), expected, "{input}");
+        }
+    }
+
+    #[test]
+    fn heredocs_and_unmatched_delimiters_keep_the_original_history() {
+        for input in [
+            "cat <<EOF\n arbitrary ; && text\nEOF\n echo done",
+            "echo  'unfinished; echo done",
+            "echo  \"$(unfinished; echo done",
+            "",
+        ] {
+            assert_eq!(history_layout(input), input);
         }
     }
 }

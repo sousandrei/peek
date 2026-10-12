@@ -11,19 +11,19 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
-use crate::cli::history;
 use crate::colors::{ColorRole, Colors};
 use crate::oci::FileEntry;
+use crate::presentation;
 
 use super::state::{Action, App, Areas, Focus};
 use super::tree::Category;
 
-pub struct Theme {
+pub(super) struct Theme {
     colors: Colors,
 }
 
 impl Theme {
-    pub fn detect() -> Self {
+    pub(super) fn detect() -> Self {
         Self {
             colors: Colors::detect(std::io::stdout().is_terminal()),
         }
@@ -43,7 +43,7 @@ impl Theme {
     }
 }
 
-pub fn draw_loading(
+pub(super) fn draw_loading(
     frame: &mut Frame<'_>,
     theme: &Theme,
     reference: &str,
@@ -114,7 +114,7 @@ pub fn draw_loading(
     );
 }
 
-pub fn draw(frame: &mut Frame<'_>, app: &mut App<'_>, theme: &Theme) {
+pub(super) fn draw(frame: &mut Frame<'_>, app: &mut App<'_>, theme: &Theme) {
     app.areas = Areas::default();
     let area = frame.area();
     frame.render_widget(
@@ -260,19 +260,28 @@ fn control_buttons(app: &App<'_>, theme: &Theme) -> Vec<(String, Action, Color)>
     ] {
         buttons.push((label.into(), action, theme.color(ColorRole::Muted)));
     }
-    for (index, (name, color)) in [
-        ("a Added", theme.color(ColorRole::Added)),
-        ("m Modified", theme.color(ColorRole::Modified)),
-        ("d Deleted", theme.color(ColorRole::Removed)),
-        ("u Unchanged", theme.color(ColorRole::Muted)),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let enabled = app.categories[index];
+    for (category, name, color) in [
+        (Category::Added, "a Added", theme.color(ColorRole::Added)),
+        (
+            Category::Modified,
+            "m Modified",
+            theme.color(ColorRole::Modified),
+        ),
+        (
+            Category::Removed,
+            "d Deleted",
+            theme.color(ColorRole::Removed),
+        ),
+        (
+            Category::Unchanged,
+            "u Unchanged",
+            theme.color(ColorRole::Muted),
+        ),
+    ] {
+        let enabled = app.categories[category.index()];
         buttons.push((
             format!("{} {name}", if enabled { "●" } else { "○" }),
-            Action::Category(index),
+            Action::Category(category),
             if enabled {
                 color
             } else {
@@ -583,7 +592,7 @@ fn draw_command(frame: &mut Frame<'_>, app: &mut App<'_>, theme: &Theme, area: R
             Line::default(),
         ];
         lines.extend(
-            history::layout(&layer.layer.command)
+            presentation::history_layout(&layer.layer.command)
                 .lines()
                 .map(|line| Line::from(clean(line))),
         );
@@ -739,7 +748,7 @@ fn draw_help(frame: &mut Frame<'_>, theme: &Theme, area: Rect) {
     );
 }
 
-pub fn clean(value: &str) -> String {
+pub(super) fn clean(value: &str) -> String {
     value
         .chars()
         .flat_map(|character| {
@@ -769,7 +778,7 @@ fn truncate(value: &str, width: usize) -> String {
     text
 }
 
-pub fn bytes_label(bytes: u64) -> String {
+pub(super) fn bytes_label(bytes: u64) -> String {
     if bytes < 1024 {
         format!("{bytes} B")
     } else if bytes < 1024 * 1024 {
