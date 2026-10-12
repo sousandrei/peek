@@ -129,33 +129,30 @@ pub fn run() -> Result<()> {
         return Ok(());
     }
 
-    if !matches!(cli.command, Some(Command::Completion { .. })) {
-        match crate::updater::check_for_update() {
-            Ok(Some(update)) => {
-                let confirmed = match confirm_update(&update.version) {
-                    Ok(confirmed) => confirmed,
-                    Err(error) => {
-                        eprintln!("peek: cannot read update confirmation: {error:#}");
-                        false
-                    }
-                };
+    run_command(
+        &cli,
+        io::stdin().is_terminal() && io::stdout().is_terminal(),
+        crate::updater::check_for_update,
+    )
+}
 
-                if confirmed {
-                    match crate::updater::install(&update) {
-                        Ok(()) => {
-                            eprintln!(
-                                "Updated Peek to {}. Run the command again to start the new version.",
-                                update.version
-                            );
-                            return Ok(());
-                        }
-                        Err(error) => eprintln!("peek: update failed: {error:#}"),
-                    }
-                }
-            }
-            Ok(None) => {}
-            Err(error) => eprintln!("peek: update check failed: {error:#}"),
+fn run_command(
+    cli: &Cli,
+    interactive: bool,
+    check_update: impl FnOnce() -> Result<Option<crate::updater::AvailableUpdate>>,
+) -> Result<()> {
+    match &cli.command {
+        Some(Command::Analyze(options)) => {
+            commands::image_input(&options.image)?;
         }
+        None => {
+            commands::image_input(&cli.options)?;
+        }
+        Some(Command::Completion { .. }) => {}
+    }
+
+    if automatic_update_allowed(cli, interactive) && offer_update(check_update) {
+        return Ok(());
     }
 
     match &cli.command {
@@ -163,6 +160,43 @@ pub fn run() -> Result<()> {
         Some(Command::Completion { shell }) => commands::completion(*shell),
         None => commands::inspect(&cli.options),
     }
+}
+
+fn automatic_update_allowed(cli: &Cli, interactive: bool) -> bool {
+    cli.command.is_none() && interactive
+}
+
+// Optional update failures are diagnostics; false continues the requested operation.
+fn offer_update(
+    check_update: impl FnOnce() -> Result<Option<crate::updater::AvailableUpdate>>,
+) -> bool {
+    match check_update() {
+        Ok(Some(update)) => {
+            let confirmed = match confirm_update(&update.version) {
+                Ok(confirmed) => confirmed,
+                Err(error) => {
+                    eprintln!("peek: cannot read update confirmation: {error:#}");
+                    false
+                }
+            };
+
+            if confirmed {
+                match crate::updater::install(&update) {
+                    Ok(()) => {
+                        eprintln!(
+                            "Updated Peek to {}. Run the command again to start the new version.",
+                            update.version
+                        );
+                        return true;
+                    }
+                    Err(error) => eprintln!("peek: update failed: {error:#}"),
+                }
+            }
+        }
+        Ok(None) => {}
+        Err(error) => eprintln!("peek: update check failed: {error:#}"),
+    }
+    false
 }
 
 fn print_usage_hint() {
@@ -192,7 +226,7 @@ fn accepts_update(answer: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::accepts_update;
+    use super::*;
 
     #[test]
     fn update_prompt_only_accepts_explicit_yes() {
@@ -201,5 +235,70 @@ mod tests {
         assert!(!accepts_update(""));
         assert!(!accepts_update("n"));
         assert!(!accepts_update("no"));
+    }
+
+    #[test]
+    fn automatic_updates_are_limited_to_interactive_inspection() {
+        let inspect = Cli::try_parse_from(["peek", "fixture.tar"]).unwrap();
+        assert!(automatic_update_allowed(&inspect, true));
+        assert!(!automatic_update_allowed(&inspect, false));
+        for arguments in [
+            vec!["peek", "analyze", "fixture.tar"],
+            vec!["peek", "analyze", "fixture.tar", "--json"],
+            vec!["peek", "completion", "bash"],
+        ] {
+            let cli = Cli::try_parse_from(arguments).unwrap();
+            assert!(!automatic_update_allowed(&cli, true));
+            assert!(!automatic_update_allowed(&cli, false));
+        }
+    }
+
+    #[test]
+    fn headless_dispatch_never_invokes_the_update_lookup_even_with_a_terminal() {
+        let directory = tempfile::tempdir().unwrap();
+        let missing = directory.path().join("missing.tar");
+        for json in [false, true] {
+            let mut arguments = vec![
+                "peek",
+                "analyze",
+                "--source",
+                "docker-archive",
+                missing.to_str().unwrap(),
+            ];
+            if json {
+                arguments.push("--json");
+            }
+            let cli = Cli::try_parse_from(arguments).unwrap();
+            let error = run_command(&cli, true, || panic!("analysis must not check for updates"))
+                .unwrap_err();
+            assert!(format!("{error:#}").contains("cannot open image archive"));
+        }
+        let cli = Cli::try_parse_from(["peek", "completion", "bash"]).unwrap();
+        run_command(&cli, true, || {
+            panic!("completion must not check for updates")
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn unsupported_options_fail_before_an_interactive_update_lookup() {
+        let cli = Cli::try_parse_from(["peek", "fixture.tar", "--ignore-errors"]).unwrap();
+        let error = run_command(&cli, true, || {
+            panic!("invalid options must be rejected first")
+        })
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("best-effort archive parsing is not implemented")
+        );
+    }
+
+    #[test]
+    fn no_update_or_lookup_failure_continues_the_requested_operation() {
+        assert!(!offer_update(|| Ok(None)));
+        assert!(!offer_update(|| Err(anyhow::anyhow!(
+            "network unavailable"
+        ))));
     }
 }

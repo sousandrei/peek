@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use super::{AnalyzeOptions, ImageOptions, LayerFormat, Shell, Source, output};
 use crate::{export, oci, tui};
 
-fn image_input(options: &ImageOptions) -> Result<(&str, oci::Source)> {
+pub(super) fn image_input(options: &ImageOptions) -> Result<(&str, oci::Source)> {
     if options.ignore_errors {
         bail!("best-effort archive parsing is not implemented; omit --ignore-errors");
     }

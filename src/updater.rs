@@ -5,8 +5,8 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, Result, bail};
-use self_update::{Download, backends::github::ReleaseList};
+use anyhow::{Context, Result, bail, ensure};
+use self_update::{Download, backends::github::ReleaseList, update::Releases};
 use sha2::{Digest, Sha256};
 
 const REPOSITORY_OWNER: &str = "sousandrei";
@@ -15,7 +15,7 @@ const REPOSITORY_NAME: &str = "peek";
 pub struct AvailableUpdate {
     pub version: String,
     url: String,
-    digest: Option<String>,
+    digest: String,
     asset_name: &'static str,
 }
 
@@ -34,6 +34,11 @@ pub fn check_for_update() -> Result<Option<AvailableUpdate>> {
         .timeout(Duration::from_secs(5))
         .build()?
         .fetch()?;
+
+    select_update(&releases, asset_name)
+}
+
+fn select_update(releases: &Releases, asset_name: &'static str) -> Result<Option<AvailableUpdate>> {
     let Some(release) = releases.latest() else {
         return Ok(None);
     };
@@ -52,20 +57,26 @@ pub fn check_for_update() -> Result<Option<AvailableUpdate>> {
                 release.version()
             )
         })?;
+    let digest = asset
+        .digest()
+        .context("release asset has no SHA-256 digest")?;
+    sha256_digest(digest)?;
 
     Ok(Some(AvailableUpdate {
         version: release.version().to_owned(),
         url: asset.download_url().to_owned(),
-        digest: asset.digest().map(str::to_owned),
+        digest: digest.to_owned(),
         asset_name,
     }))
 }
 
 pub fn install(update: &AvailableUpdate) -> Result<()> {
-    replace_from_asset(&update.url, update.digest.as_deref(), update.asset_name)
+    replace_from_asset(&update.url, &update.digest, update.asset_name)
 }
 
-fn replace_from_asset(url: &str, digest: Option<&str>, asset_name: &str) -> Result<()> {
+fn replace_from_asset(url: &str, digest: &str, asset_name: &str) -> Result<()> {
+    sha256_digest(digest)?;
+
     let executable =
         std::env::current_exe().context("cannot locate the running Peek executable")?;
     let executable_dir = executable
@@ -93,17 +104,22 @@ fn replace_from_asset(url: &str, digest: Option<&str>, asset_name: &str) -> Resu
     Ok(())
 }
 
-fn verify_digest(path: &Path, expected: Option<&str>) -> Result<()> {
-    let Some(expected) = expected else {
-        return Ok(());
-    };
-
+fn sha256_digest(expected: &str) -> Result<&str> {
     let (algorithm, expected_hex) = expected
         .split_once(':')
         .context("release asset has an invalid digest")?;
     if algorithm != "sha256" {
         bail!("release asset uses unsupported digest algorithm {algorithm}");
     }
+    ensure!(
+        expected_hex.len() == 64 && expected_hex.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "release asset has an invalid SHA-256 digest; expected 64 hexadecimal digits"
+    );
+    Ok(expected_hex)
+}
+
+fn verify_digest(path: &Path, expected: &str) -> Result<()> {
+    let expected_hex = sha256_digest(expected)?;
 
     let mut file = File::open(path).context("cannot read downloaded update for verification")?;
     let mut hasher = Sha256::new();
@@ -123,7 +139,7 @@ fn verify_digest(path: &Path, expected: Option<&str>) -> Result<()> {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
-    if actual != expected_hex {
+    if !actual.eq_ignore_ascii_case(expected_hex) {
         bail!("downloaded update failed its SHA-256 digest check");
     }
 
@@ -158,7 +174,20 @@ fn asset_name_for_host(os: &str, architecture: &str) -> Option<&'static str> {
 mod tests {
     use std::fs;
 
-    use super::{asset_name_for_host, verify_digest};
+    use super::*;
+    use self_update::update::{Release, ReleaseAsset};
+
+    const ASSET: &str = "peek-linux-x86_64";
+    const SHA256: &str = "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+    fn releases(version: &str, assets: Vec<ReleaseAsset>) -> Releases {
+        let release = Release::builder()
+            .version(version)
+            .assets(assets)
+            .build()
+            .unwrap();
+        Releases::from_releases(vec![release], env!("CARGO_PKG_VERSION"))
+    }
 
     #[test]
     fn maps_supported_hosts_to_release_assets() {
@@ -196,13 +225,93 @@ mod tests {
         let binary = directory.path().join("peek");
         fs::write(&binary, b"abc").unwrap();
 
+        assert!(verify_digest(&binary, SHA256).is_ok());
         assert!(
             verify_digest(
                 &binary,
-                Some("sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+                &format!("sha256:{}", SHA256[7..].to_ascii_uppercase())
             )
             .is_ok()
         );
-        assert!(verify_digest(&binary, Some("sha256:00")).is_err());
+        let wrong = format!("sha256:{}", "0".repeat(64));
+        assert!(
+            verify_digest(&binary, &wrong)
+                .unwrap_err()
+                .to_string()
+                .contains("failed its SHA-256 digest check")
+        );
+    }
+
+    #[test]
+    fn no_release_or_no_newer_version_has_no_update() {
+        let empty = Releases::from_releases(Vec::new(), env!("CARGO_PKG_VERSION"));
+        assert!(select_update(&empty, ASSET).unwrap().is_none());
+        for version in ["0.0.0", env!("CARGO_PKG_VERSION")] {
+            assert!(
+                select_update(&releases(version, Vec::new()), ASSET)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn newer_release_selects_the_exact_host_asset_with_a_verified_digest() {
+        let url = "https://example.invalid/peek";
+        let assets = vec![
+            ReleaseAsset::new("peek-linux-aarch64", "https://example.invalid/arm64")
+                .with_digest(SHA256),
+            ReleaseAsset::new(ASSET, url).with_digest(SHA256),
+        ];
+        let update = select_update(&releases("9999.0.0", assets), ASSET)
+            .unwrap()
+            .unwrap();
+        assert_eq!(update.version, "9999.0.0");
+        assert_eq!(update.url, url);
+        assert_eq!(update.asset_name, ASSET);
+        assert_eq!(update.digest, SHA256);
+    }
+
+    #[test]
+    fn missing_host_asset_or_missing_digest_returns_a_clear_error() {
+        let error = select_update(&releases("9999.0.0", Vec::new()), ASSET)
+            .err()
+            .unwrap();
+        assert!(
+            error
+                .to_string()
+                .contains("has no asset named peek-linux-x86_64")
+        );
+        let asset = ReleaseAsset::new(ASSET, "https://example.invalid/peek");
+        let error = select_update(&releases("9999.0.0", vec![asset]), ASSET)
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("has no SHA-256 digest"));
+    }
+
+    #[test]
+    fn malformed_or_unsupported_digests_are_rejected_before_download() {
+        let too_long = format!("sha256:{}", "0".repeat(65));
+        let non_hex = format!("sha256:{}", "g".repeat(64));
+        let unsupported = format!("sha512:{}", "0".repeat(64));
+        for digest in [
+            "",
+            "sha256:",
+            "sha256:00",
+            &too_long,
+            &non_hex,
+            &unsupported,
+        ] {
+            let asset =
+                ReleaseAsset::new(ASSET, "https://example.invalid/peek").with_digest(digest);
+            assert!(
+                select_update(&releases("9999.0.0", vec![asset]), ASSET).is_err(),
+                "{digest}"
+            );
+            let error =
+                replace_from_asset("https://example.invalid/peek", digest, ASSET).unwrap_err();
+            assert!(error.to_string().contains("digest"), "{error}");
+            assert!(!error.to_string().contains("download"), "{error}");
+        }
     }
 }
